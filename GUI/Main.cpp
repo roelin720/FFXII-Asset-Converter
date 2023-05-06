@@ -578,7 +578,7 @@ bool InputAsset(const char* label, char* buf, size_t path_type)
 	return edited;
 }
 
-static void helloWorld() 
+static void draw_gui() 
 {
 	ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize, ImGuiCond_Always);
 	ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -762,8 +762,7 @@ int main(int argc, char* argv[])
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
-		// Run our Dear ImGui application
-		helloWorld();
+		draw_gui();
 
 		// Rendering
 		ImGui::Render();
