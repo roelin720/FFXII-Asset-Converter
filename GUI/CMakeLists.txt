@@ -1,0 +1,48 @@
+﻿project (PhyreConverterGUI)
+
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
+
+include(GLFW)
+include(ImGUI)
+include(PFD)
+include(CTPL)
+LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${imgui_SOURCE_DIR}")
+LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${glfw_SOURCE_DIR}")
+LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${pfd_SOURCE_DIR}")
+LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${ctpl_SOURCE_DIR}")
+LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${THIRD_PARTY_DIR}/glad/include")
+
+set(GUI_SOURCES ${CONVERTER_SOURCES} ${IMGUI_SOURCES} ${icon_headers}
+	"${THIRD_PARTY_DIR}/glad/include/glad/glad.h"
+	"${THIRD_PARTY_DIR}/glad/src/glad.c"
+	"${CMAKE_CURRENT_LIST_DIR}/Main.cpp"
+	"${CMAKE_CURRENT_LIST_DIR}/Process.h"
+	"${CMAKE_CURRENT_LIST_DIR}/Process.cpp"
+	"${CMAKE_CURRENT_LIST_DIR}/Icons/file_white.h"
+	"${CMAKE_CURRENT_LIST_DIR}/Icons/folder_white.h"
+)
+
+add_executable(${PROJECT_NAME} WIN32 ${GUI_SOURCES} "${CMAKE_CURRENT_LIST_DIR}/app_icon.rc")
+add_dependencies(${PROJECT_NAME} prepare_assimp)
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE "CONVERTER_VERSION=\"${CONVERTER_VERSION}\"")
+
+set_target_properties(${PROJECT_NAME} PROPERTIES LINKER_LANGUAGE CXX)
+
+target_include_directories(${PROJECT_NAME} PUBLIC "${ADDITIONAL_INCLUDE_DIRECTORIES}")
+target_link_libraries(${PROJECT_NAME} PUBLIC assimp DirectXTex glfw)
+
+if(POPULATE_BIN)
+	set(TMP_DIR "${ROOT_PATH}/bin/tmp")
+	set(GUI_BIN_NAME "FFXIIConvertGUI")
+	set(GUI_EXE_PATH "${ROOT_PATH}/bin/${GUI_BIN_NAME}.exe")
+	set(GUI_ZIP_PATH "${ROOT_PATH}/bin/${GUI_BIN_NAME}v${CONVERTER_VERSION}.zip")	
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E make_directory "${TMP_DIR}")
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_PATH}/bundled_files" "${TMP_DIR}")
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}> "${GUI_EXE_PATH}")
+	#add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_RC_COMPILER} "${CMAKE_CURRENT_SOURCE_DIR}/appicon.rc" "${GUI_EXE_PATH}")
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy "${GUI_EXE_PATH}" "${TMP_DIR}/${GUI_BIN_NAME}.exe")
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD WORKING_DIRECTORY "${ROOT_PATH}/bin" COMMAND ${CMAKE_COMMAND} -E tar "cfv" "${GUI_ZIP_PATH}" --format=zip "${TMP_DIR}")
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E remove "${TMP_DIR}/${GUI_BIN_NAME}.exe")
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E remove_directory "${TMP_DIR}")
+endif()

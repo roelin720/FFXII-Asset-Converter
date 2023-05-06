@@ -1,0 +1,5 @@
+.vs/
+out/
+bin/
+*/__pycache__/
+*/.idea/
