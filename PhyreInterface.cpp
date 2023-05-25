@@ -11,6 +11,7 @@
 #include <windows.h>
 #include <Dbghelp.h>
 #include <tchar.h>
+#include "VBFArchive.h"
 
 typedef BOOL(WINAPI* MINIDUMPWRITEDUMP)(HANDLE hProcess, DWORD dwPid, HANDLE hFile, MINIDUMP_TYPE DumpType, CONST PMINIDUMP_EXCEPTION_INFORMATION ExceptionParam, CONST PMINIDUMP_USER_STREAM_INFORMATION UserStreamParam, CONST PMINIDUMP_CALLBACK_INFORMATION CallbackParam);
 
@@ -54,6 +55,10 @@ R"USAGE(
 *   The term "original_asset_path" refers to the original, unmodified asset (.dae.phyre, .dds.phyre)
 *   The term "replacement_path" refers to the unpacked, editable form of the asset (.fbx, .png, etc.)
 *   The term "mod_output_path" refers to the repacked, modified form of the asset (.dae.phyre, .dds.phyre)
+*
+*   It's possible for the original_asset_path and/or mod_output_path to index directly into a vbf:
+*       E.g: (...)/FFXII_TZA.vbf/gamedata/d3d11/artdata/chr/chara/c10/c1004/mws/c1004.dae.phyre
+*   In which case, the asset files will be extracted, then injected back into the vbf after modifications are applied
 *   
 *   Please contact me on Nexus if you encounter any bugs.
 ************************************************
@@ -96,6 +101,110 @@ bool PhyreInterface::Run(int argc, const char** argv)
             return false;
         }
 
+        if (argc > 3 && std::string(argv[2]).contains(".vbf"))
+        {
+            std::string vbf_path, vbf_file_name;
+            if (!VBFUtils::Separate(argv[2], vbf_path, vbf_file_name))
+            {
+                std::cerr << "Failed to deduce archive paths for " << argv[2] << std::endl;
+                return false;
+            }
+            std::clog << "Loading vbf " << vbf_path << std::endl;
+
+            VBFArchive vbf;
+            if (!vbf.load(vbf_path))
+            {
+                std::cerr << "Failed to load" << vbf_path << std::endl;
+                return false;
+            }
+            VBFArchive::TreeNode* node = vbf.find_node(vbf_file_name);
+            if (node == nullptr)
+            {
+                std::cerr << "Failed to find file/folder in vbf - " << vbf_file_name << std::endl;
+                return false;
+            }
+
+            std::clog << "Extracting vbf files" << std::endl;
+
+            std::string tmp = PhyreIO::CreateTmpPath("cmd_vbf_tmp_orig");
+            if (tmp.empty())
+            {
+                std::cerr << "Failed to create tmp vbf extraction path" << std::endl;
+                return false;
+            }
+            if (!vbf.extract_all(tmp, *node))
+            {
+                std::cerr << "Failed to extract files from vbf - " << vbf_file_name << std::endl;
+                return false;
+            }
+            auto orig_segs = PhyreIO::Segment(argv[2]);
+            auto rep_segs = PhyreIO::Segment(argv[3]);
+            std::string tmp_parent_file = !rep_segs.empty() && !orig_segs.empty() && rep_segs.back() == orig_segs.back() ? tmp + "/" + orig_segs.back() : tmp;
+            std::string tmp_file = !orig_segs.empty() && vbf.find_file(vbf_file_name) ? tmp_parent_file + "/" + orig_segs.back() : tmp_parent_file;
+            argv[2] = tmp_file.c_str();
+            if (!Run(argc, argv))
+            {
+                std::filesystem::remove_all(tmp);
+                return false;
+            }
+            std::filesystem::remove_all(tmp);
+            return true;
+        }
+
+        if (argc > 4 && std::string(argv[4]).contains(".vbf"))
+        {
+            std::string vbf_path, vbf_file_name;
+            if (!VBFUtils::Separate(argv[4], vbf_path, vbf_file_name))
+            {
+                std::cerr << "Failed to deduce archive paths for " << argv[2] << std::endl;
+                return false;
+            }
+
+            std::string tmp = PhyreIO::CreateTmpPath("cmd_vbf_tmp_out");
+            if (tmp.empty())
+            {
+                std::cerr << "Failed to create tmp vbf injection path" << std::endl;
+                return false;
+            }
+
+            std::clog << "Loading vbf " << vbf_path << std::endl;
+
+            VBFArchive vbf;
+            if (!vbf.load(vbf_path))
+            {
+                std::cerr << "Failed to load " << vbf_path << std::endl;
+                return false;
+            }
+            auto rep_segs = PhyreIO::Segment(argv[3]);
+            auto out_segs = PhyreIO::Segment(argv[4]);
+            std::string tmp_parent_file = !rep_segs.empty() && !out_segs.empty() && rep_segs.back() == out_segs.back() ? tmp + "/" + out_segs.back() : tmp;
+            std::string tmp_file = !out_segs.empty() && vbf.find_file(vbf_file_name) ? tmp_parent_file + "/" + out_segs.back() : tmp_parent_file;
+            argv[4] = tmp_file.c_str();
+            if (!Run(argc, argv))
+            {
+                std::filesystem::remove_all(tmp);
+                return false;
+            }
+
+            VBFArchive::TreeNode* node = vbf.find_node(vbf_file_name);
+            if (node == nullptr)
+            {
+                std::cerr << "Failed to find file/folder in vbf - " << vbf_file_name << std::endl;
+                return false;
+            }
+
+            std::clog << "Injecting files into vbf" << std::endl;
+
+            if (!vbf.inject_all(tmp, *node))
+            {
+                std::cerr << "Failed to inject files into vbf - " << vbf_file_name << std::endl;
+                return false;
+            }
+
+            std::filesystem::remove_all(tmp);
+            return true;
+        }
+
         std::string option = argv[1];
         if (option == "-h" || option == "--help")
         {
@@ -106,7 +215,7 @@ bool PhyreInterface::Run(int argc, const char** argv)
         {
             if (argc != 5)
             {
-                std::cerr << "Incorrect number of command arguments (expected 3)" << std::endl;
+                std::cerr << "Incorrect number of command arguments (expected 3, recieved " << argc - 2 << ")" << std::endl;
                 std::clog << UsagePrompt() << std::endl;
                 return false;
             }
@@ -133,6 +242,8 @@ bool PhyreInterface::Run(int argc, const char** argv)
                 {
                     return false;
                 }
+
+                bool any_match_found = false;
 
                 for (const auto& entry : fs::recursive_directory_iterator(rep_path))
                 {
@@ -161,9 +272,17 @@ bool PhyreInterface::Run(int argc, const char** argv)
                             out_file.c_str()
                         };
                         Run(_argc, _argv);
+
+                        any_match_found = true;
                     }
                 }
-                return 0;
+
+                if (!any_match_found)
+                {
+                    std::cerr << "Found no corresponding files across each folder" << std::endl;
+                }
+
+                return true;
             }
 
             if (PhyreIO::IsDirectory(rep_path))
@@ -193,13 +312,13 @@ bool PhyreInterface::Run(int argc, const char** argv)
             }
 
             std::clog << "Success packing to " << PhyreIO::BranchFromPath(out_path, orig_path) << std::endl;
-            return 0;
+            return true;
         }
         else if (option == "-u" || option == "--unpack")
         {
             if (argc != 4)
             {
-                std::cerr << "Incorrect number of command arguments (expected 2)" << std::endl;
+                std::cerr << "Incorrect number of command arguments (expected 2, recieved " << argc - 2 << ")" << std::endl;
                 std::clog << UsagePrompt() << std::endl;
                 return false;
             }
@@ -252,7 +371,7 @@ bool PhyreInterface::Run(int argc, const char** argv)
                     };
                     Run(_argc, _argv);
                 }
-                return 0;
+                return true;
             }
 
             if (!PhyreIO::VerifyPhyreHeader(orig_path))
@@ -274,7 +393,7 @@ bool PhyreInterface::Run(int argc, const char** argv)
                 return false;
             }
             std::clog << "Success unpacking to " << PhyreIO::BranchFromPath(out_path, orig_path) << std::endl;
-            return 0;
+            return true;
         }
         else
         {
@@ -282,7 +401,7 @@ bool PhyreInterface::Run(int argc, const char** argv)
             std::clog << UsagePrompt() << std::endl;
             return false;
         }
-        return 0;
+        return true;
     }
     catch (const std::exception& e)
     {

@@ -38,7 +38,7 @@ bool Phyre::DAE::Unpack(const std::string& orig_path, const std::string& out_pat
     std::clog << "Importing " << PhyreIO::FileName(orig_path) << std::endl;
 
     Assimp::Importer importer;
-    if (const aiScene* scene = importer.ReadFile(orig_path, aiProcess_MakeLeftHanded | aiProcess_FlipUVs))
+    if (const aiScene* scene = importer.ReadFile(orig_path, aiProcess_MakeLeftHanded | aiProcess_FlipUVs | aiProcess_Triangulate))
     {
         std::clog << "Exporting " << PhyreIO::FileName(out_path) << std::endl;
 

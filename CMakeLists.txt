@@ -1,7 +1,7 @@
 ﻿cmake_minimum_required (VERSION 3.8)
 
 project (PhyreConverter)
-set(CONVERTER_VERSION "1.1")
+set(CONVERTER_VERSION "1.3.0")
 
 option(POPULATE_BIN "place binaries in /bin and zip binaries with bundled_files to /bin" ON)
 
@@ -13,9 +13,7 @@ set(ADDITIONAL_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_LIST_DIR}")
 set(THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdParty")
 list(PREPEND CMAKE_MODULE_PATH "${THIRD_PARTY_DIR}")
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -s")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -s")
+set(CMAKE_CXX_STANDARD 23)
 add_compile_definitions(NOMINMAX)
 
 file(READ "${CMAKE_CURRENT_LIST_DIR}/bundled_files/README.txt" README_CONTENTS)
@@ -42,6 +40,12 @@ set(CONVERTER_SOURCES
 	"${CMAKE_CURRENT_LIST_DIR}/PhyreStructs.cpp"
 	"${CMAKE_CURRENT_LIST_DIR}/PhyreInterface.h"
 	"${CMAKE_CURRENT_LIST_DIR}/PhyreInterface.cpp"
+	"${CMAKE_CURRENT_LIST_DIR}/PhyreMetadata.h"
+	"${CMAKE_CURRENT_LIST_DIR}/PhyreMetadata.cpp"
+	"${CMAKE_CURRENT_LIST_DIR}/VBFArchive.h"
+	"${CMAKE_CURRENT_LIST_DIR}/VBFArchive.cpp"
+	"${THIRD_PARTY_DIR}/md5/md5.h"
+	"${THIRD_PARTY_DIR}/md5/md5.cpp"
 )
 
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/CMD")

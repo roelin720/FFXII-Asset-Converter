@@ -1,5 +1,6 @@
 #include "PhyreIOUtils.h"
 #include <filesystem>
+#include <windows.h>
 
 namespace fs = std::filesystem;
 
@@ -38,6 +39,18 @@ namespace
             }
         }
         return segments;
+    }
+
+    std::string strip(const std::string& str)
+    {
+        std::string::const_iterator b = str.begin(), e = str.end();
+        while (b != e && isspace(*b)) {
+            ++b;
+        }
+        while (b != e && isspace(*(e - 1))) {
+            --e;
+        }
+        return std::string(b, e);
     }
 }
 
@@ -79,7 +92,10 @@ std::string PhyreIO::GetExtension(const std::string& path)
     try
     {
         size_t parent_end = path.find_last_of("\\/:");
-        return to_lower(path.substr(path.find_first_of(".", parent_end + 1) + 1));
+        if (parent_end == std::string::npos) parent_end = 0;
+        size_t ext_start = path.find_first_of(".", parent_end + 1);
+        if(ext_start == std::string::npos) return "";
+        return to_lower(path.substr(ext_start + 1));
     }
     catch (const std::exception&)
     {
@@ -105,10 +121,10 @@ bool PhyreIO::VerifyParentFolderAccessible(const std::string& path)
         }
         std::string dir = path.substr(0, parent_end);
 
-        struct stat stat_buffer;
-        if (stat(dir.c_str(), &stat_buffer) != 0 || (stat_buffer.st_mode & S_IFDIR) == 0)
+        struct _stat64 stat_buffer;
+        if (_stat64(dir.c_str(), &stat_buffer) != 0 || (stat_buffer.st_mode & S_IFDIR) == 0)
         {
-            std::cerr << "File's folder is not accessible \"" << path << "\"" << std::endl;
+            std::cerr << "File's parent folder is not accessible \"" << path << "\"" << std::endl;
             return false;
         }
     }
@@ -149,10 +165,53 @@ bool PhyreIO::CopyFolderHierarchy(const std::string& dst, const std::string& src
     }
 }
 
+std::vector<std::string> PhyreIO::Segment(const std::string& file_name)
+{
+    std::vector<std::string> name_segs;
+    name_segs.push_back(std::string());
+    name_segs.back().reserve(32);
+    for (char c : Normalise(file_name))
+    {
+        if ((c == '/' || c == '\\') && !name_segs.back().empty())
+        {
+            name_segs.push_back(std::string());
+            name_segs.back().reserve(32);
+        }
+        else if (c != '\"')
+        {
+            name_segs.back().push_back(c);
+        }
+    }
+    if (name_segs.back().empty())
+    {
+        return {};
+    }
+    return name_segs;
+}
+
+std::string PhyreIO::Join(const std::vector<std::string>& path)
+{
+    std::string path_str;
+    if (path.size() == 1)
+    {
+        return path[0] + (path[0].contains(':') ? "//" : "");
+    }
+    if (!path.empty())
+    {
+        path_str.reserve(path.size() - 1 + path.size() * 16);
+        path_str += path[0] + (path.size() == 1 ? "/" : "");
+        for (int i = 1; i < path.size(); ++i)
+        {
+            (path_str += "/") += path[i];
+        }
+    }
+    return path_str;
+}
+
 bool PhyreIO::VerifyFileAccessible(const std::string& path)
 {
-    struct stat stat_buffer;
-    if (stat(path.c_str(), &stat_buffer) != 0)
+    struct _stat64 stat_buffer;
+    if (path == "." || _stat64(path.c_str(), &stat_buffer) != 0)
     {
         std::cerr << "File is not accessible \"" << path << "\"" << std::endl;
         return false;
@@ -162,7 +221,8 @@ bool PhyreIO::VerifyFileAccessible(const std::string& path)
 
 void PhyreIO::CancelWrite(const std::string& path, std::ofstream* stream)
 {
-    try {
+    try 
+    {
         if(stream) stream->close();
         if(path.size()) std::filesystem::remove(path);
     }
@@ -172,7 +232,6 @@ void PhyreIO::CancelWrite(const std::string& path, std::ofstream* stream)
         std::cerr << "IO ERROR - failed to delete incomplete file: " << e.what() << " " << ec.message() << std::endl;
     }
 }
-
 
 bool PhyreIO::VerifyPhyreHeader(const std::string& phyre_path)
 {
@@ -198,7 +257,8 @@ bool PhyreIO::VerifyPhyreHeader(const std::string& phyre_path)
 
 std::string PhyreIO::FileName(const std::string& path)
 {
-    return path.substr(path.find_last_of("/\\") + 1);
+    size_t last_parent = path.find_last_of("/\\");
+    return last_parent == std::string::npos ? path : path.substr(path.find_last_of("/\\") + 1);
 }
 
 std::string PhyreIO::TruePathCase(const std::string& path)
@@ -260,7 +320,95 @@ std::string PhyreIO::BranchFromPath(const std::string& deviating_path, const std
     return branch;
 }
 
-int64_t PhyreIO::GetChunks(std::vector<Phyre::Chunk>& chunks, std::ifstream& stream, const std::vector<std::string>& filters)
+std::string PhyreIO::Normalise(const std::string& path)
+{
+    auto b = path.begin(), e = path.begin() + strlen(path.c_str());
+    while (b != e && (isspace(*b) || *b == '\\' || *b == '/')) {
+        ++b;
+    }
+    while (b != e && (isspace(*(e - 1)) || *(e - 1) == '\\' || *(e - 1) == '/')) {
+        --e;
+    }
+    if (b != e) 
+    {
+        std::string npath;
+        npath.reserve(path.size());
+
+        for (auto i = b; i + 1 != e; ++i)
+        {
+            if ((*i == '\\' || *i == '/'))
+            {
+                if ((*(i + 1) == '\\' || *(i + 1) == '/'))
+                {
+                    continue;
+                }
+                npath.push_back('/');
+                continue;
+            }
+            npath.push_back(*i);
+        }
+        npath.push_back(*(e - 1));
+
+        if (*(e - 1) == ':')
+        {
+            npath.push_back('/');
+        }
+        return npath;
+    }
+
+    return std::string();
+}
+
+std::string PhyreIO::TmpPath()
+{
+    try
+    {
+        std::string temp_path = "tmp";
+
+        if (!CreateDirectoryA("tmp", NULL) && GetLastError() != ERROR_ALREADY_EXISTS)
+        {
+            temp_path.resize(512);
+            GetTempPathA(temp_path.size(), temp_path.data());
+
+            struct _stat64 stat_buffer;
+            if (_stat64(temp_path.c_str(), &stat_buffer) == 0)
+            {
+                return std::filesystem::absolute(std::string(temp_path.begin(), temp_path.end() - 1)).string();
+            }
+            MessageBoxA(NULL, std::string("IO ERROR: Failed to retrieve/create temp path").c_str(), "CRITICAL FAILURE", MB_ICONERROR | MB_OK);
+            exit(-1);
+        }
+        else
+        {
+            return std::filesystem::absolute("tmp").string();
+        }
+    }
+    catch (const std::exception& e)
+    {
+        const auto ec = std::error_code{ errno, std::system_category() };
+        std::string msg = std::string("IO ERROR: Failed to retrieve temp path - ") + e.what() + " " + ec.message();
+        MessageBoxA(NULL, msg.c_str(), "CRITICAL FAILURE", MB_ICONERROR | MB_OK);
+        exit(-1);
+    }
+    return "";
+}
+
+std::string PhyreIO::CreateTmpPath(const std::string& folder_name)
+{
+    std::string path = TmpPath() + "/" + folder_name;
+    if (std::filesystem::exists(path))
+    {
+        std::filesystem::remove_all(path);
+    }
+    if (!CreateDirectoryA(path.c_str(), NULL) && ERROR_ALREADY_EXISTS != GetLastError())
+    {
+        std::cerr << "failed to create temp directory " << path << std::endl;
+        return "";
+    }
+    return path;
+}
+
+int64_t PhyreIO::GetChunks(std::vector<Phyre::Chunk>& chunks, std::istream& stream, const std::vector<std::string>& filters)
 {
     try 
     {

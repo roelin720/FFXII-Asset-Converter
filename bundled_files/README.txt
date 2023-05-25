@@ -1,4 +1,4 @@
-FFXII Asset Converter version 1.1 by Roelin hosted by Nexus
+FFXII Asset Converter version 1.3.0 by Roelin hosted by Nexus
 
 A tool to convert most FFXII models and textures to and from common formats.
 With this tool, it can now be possible to create HD character textures and completely reshape any model.
@@ -17,6 +17,10 @@ General usage:
 
 	- The program unpacks the original asset to a replacement asset, from which it may be edited via programs like blender. 
 	  It then uses the original asset to pack modifications of the replacement asset into a new mod output asset.
+
+	- It's possible for the original_asset_path and/or mod_output_path to index directly into a vbf:
+		E.g: (...)/FFXII_TZA.vbf/gamedata/d3d11/artdata/chr/chara/c10/c1004/mws/c1004.dae.phyre
+	  In which case, the asset files will be extracted, then injected back into the vbf after modifications are applied.
 
 Command Line Usage:
 	-u, --unpack INPUT<original_asset_path> OUTPUT<replacement_path>

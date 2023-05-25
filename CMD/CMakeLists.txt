@@ -5,7 +5,9 @@ set(CMD_SOURCES ${CONVERTER_SOURCES}
 )
 
 add_executable(${PROJECT_NAME} ${CMD_SOURCES})
-add_dependencies(${PROJECT_NAME} prepare_assimp)
+#add_dependencies(${PROJECT_NAME} prepare_assimp)
+LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${assimp_SOURCE_DIR}/contrib/zlib")
+LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${assimp_BINARY_DIR}/contrib/zlib")
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE "CONVERTER_VERSION=\"${CONVERTER_VERSION}\"")
 

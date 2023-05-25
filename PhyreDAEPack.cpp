@@ -34,7 +34,7 @@ bool Phyre::DAE::Pack(const std::string& original_path, const std::string& repla
 {
     std::clog << "Importing " << PhyreIO::FileName(replacement_path) << std::endl;
 
-    uint32_t import_flags = BaseImporter::SimpleExtensionCheck(replacement_path, "dae.phyre") ? 0 : aiProcess_MakeLeftHanded | aiProcess_FlipUVs | aiProcess_CalcTangentSpace | aiProcess_JoinIdenticalVertices;
+    uint32_t import_flags = BaseImporter::SimpleExtensionCheck(replacement_path, "dae.phyre") ? 0 : aiProcess_MakeLeftHanded | aiProcess_FlipUVs | aiProcess_CalcTangentSpace | aiProcess_JoinIdenticalVertices | aiProcess_Triangulate;
 
     Assimp::Importer replacement_importer;
     const aiScene* replacement_scene = replacement_importer.ReadFile(replacement_path, import_flags);
