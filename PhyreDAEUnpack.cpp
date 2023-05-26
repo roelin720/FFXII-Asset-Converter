@@ -104,11 +104,11 @@ void Phyre::DAE::Import(const std::string &pFile, aiScene *pScene)
     seek(stream, 4, std::ios_base::cur);
     mesh_data_offset += read<int32_t>(stream);
     seek(stream, 8, std::ios_base::cur);
-    mesh_data_offset += read<int32_t>(stream) * 12;
+    mesh_data_offset += int64_t(read<int32_t>(stream)) * 12;
     mesh_data_offset += read<int32_t>(stream);
     seek(stream, 4, std::ios_base::cur);
-    mesh_data_offset += read<int32_t>(stream) * 4;
-    mesh_data_offset += read<int32_t>(stream) * 16;
+    mesh_data_offset += int64_t(read<int32_t>(stream)) * 4;
+    mesh_data_offset += int64_t(read<int32_t>(stream)) * 16;
     seek(stream, 4, std::ios_base::cur);
     mesh_data_offset += chunks_end;
 
@@ -119,7 +119,7 @@ void Phyre::DAE::Import(const std::string &pFile, aiScene *pScene)
 
     seek(stream, c_node.data_offset, std::ios_base::beg);
 
-    for (int64_t i = 0; i < c_node.elem_count; ++i) //CHECK THIS, MIGHT BE NODES
+    for (int64_t i = 0; i < c_node.elem_count; ++i)
     {
         mesh_count += read<int16_t>(stream);
         seek(stream, 8, std::ios_base::cur);

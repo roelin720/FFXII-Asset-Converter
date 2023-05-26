@@ -12,7 +12,8 @@ namespace Phyre
 		PathID_ORIG,
 		PathID_REP,
 		PathID_MOD,
-		_PathID_COUNT
+		_PathID_COUNT,
+		PathID_PLAY
 	};
 
 	struct PathHistory

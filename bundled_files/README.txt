@@ -3,8 +3,6 @@ FFXII Asset Converter version 1.3.0 by Roelin hosted by Nexus
 A tool to convert most FFXII models and textures to and from common formats.
 With this tool, it can now be possible to create HD character textures and completely reshape any model.
 
-You will need a separate VBF browser program in order to extract and inject the assets from/to FFXII's VBF.
-
 General usage:
 	- Input paths may be folders or files.
 	- Can convert dae.phyre models to fbx. May be capable of other formats allowed by Assimp, but these have not been tested.

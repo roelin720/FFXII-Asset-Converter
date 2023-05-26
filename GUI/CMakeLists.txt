@@ -26,8 +26,10 @@ set(GUI_SOURCES ${CONVERTER_SOURCES} ${IMGUI_SOURCES} ${icon_headers}
 	"${CMAKE_CURRENT_LIST_DIR}/Main.cpp"
 	"${CMAKE_CURRENT_LIST_DIR}/Process.h"
 	"${CMAKE_CURRENT_LIST_DIR}/Process.cpp"
-	"${CMAKE_CURRENT_LIST_DIR}/Icons/file_white.h"
-	"${CMAKE_CURRENT_LIST_DIR}/Icons/folder_white.h"
+	"${CMAKE_CURRENT_LIST_DIR}/Audio.h"
+	"${CMAKE_CURRENT_LIST_DIR}/Audio.cpp"
+	"${CMAKE_CURRENT_LIST_DIR}/Icons/file_icon_data.h"
+	"${CMAKE_CURRENT_LIST_DIR}/Icons/folder_icon_data.h"
 	"${CMAKE_CURRENT_LIST_DIR}/Icons/file_icon_small_data.h"
 	"${CMAKE_CURRENT_LIST_DIR}/Icons/folder_icon_small_data.h"
 	"${CMAKE_CURRENT_LIST_DIR}/Icons/archive_icon_small_data.h"
@@ -45,6 +47,10 @@ set(GUI_SOURCES ${CONVERTER_SOURCES} ${IMGUI_SOURCES} ${icon_headers}
 	"${CMAKE_CURRENT_LIST_DIR}/Icons/down_icon_data.h"
 	"${CMAKE_CURRENT_LIST_DIR}/Icons/left_icon_tiny_data.h"
 	"${CMAKE_CURRENT_LIST_DIR}/Icons/right_icon_tiny_data.h"
+	"${CMAKE_CURRENT_LIST_DIR}/Icons/play_icon_data.h"
+	"${CMAKE_CURRENT_LIST_DIR}/Icons/play_file_icon_data.h"
+	"${CMAKE_CURRENT_LIST_DIR}/Icons/play_muted_icon_data.h"
+	"${CMAKE_CURRENT_LIST_DIR}/Icons/play_unmuted_icon_data.h"
 )
 string(TOLOWER "${CMAKE_BUILD_TYPE}" BUILD_TYPE )
 if (BUILD_TYPE STREQUAL "debug")

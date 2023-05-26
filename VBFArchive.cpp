@@ -45,10 +45,10 @@ namespace
 
 		if (new_size > block.size)
 		{
-			auto b_it = std::upper_bound(unused_blocks.begin(), unused_blocks.end(), new_block);
+			auto b_it = std::upper_bound(unused_blocks.begin(), unused_blocks.end(), block);
 			if (b_it != unused_blocks.end() && block.offset + block.size == b_it->offset)
 			{
-				int64_t increase = (block.offset + new_size) - (b_it->offset + b_it->size);
+				int64_t increase = new_size - block.size;
 				b_it->size -= increase;
 				b_it->offset += increase;
 				if (b_it->size == 0)
@@ -296,6 +296,14 @@ bool VBFArchive::load(const std::string& arc_path)
 			reorder_files |= i != 0 && files[i].block_list_offset < files[i - 1].block_list_offset;
 		}
 
+		if (reorder_files)
+		{
+			std::sort(std::execution::par_unseq, files.begin(), files.end(), [](const File& a, const File& b) 
+			{
+				return a.block_list_offset < b.block_list_offset;
+			});
+		}
+
 		get_unused(used_blocks, unused_data, header_len, file_size - 16);
 		get_unused(used_block_indices, unused_block_lists, 0, files.back().block_list_offset + files.back().blocks.size() * 2);
 
@@ -308,13 +316,6 @@ bool VBFArchive::load(const std::string& arc_path)
 		std::sort(std::execution::par_unseq, unused_data.begin(), unused_data.end());
 		std::sort(std::execution::par_unseq, unused_block_lists.begin(), unused_block_lists.end());
 
-		if (reorder_files)
-		{
-			std::sort(std::execution::par_unseq, files.begin(), files.end(), [](const File& a, const File& b) 
-			{
-				return a.block_list_offset < b.block_list_offset;
-			});
-		}
 		signal_modified();
 
 		return load_name_tree();
@@ -651,7 +652,8 @@ bool VBFArchive::inject(const std::string& dst_name, const std::string& src_path
 			else
 			{
 				assert(block_list.offset == 0);
-				block_list.offset = files.back().block_list_offset + files.back().blocks.size() * 2;
+				block_list.offset = -1;
+				//block_list.offset = files.back().block_list_offset + files.back().blocks.size() * 2;
 
 				while (block_list.size < dst_file.blocks.size() * 2)
 				{
@@ -668,6 +670,7 @@ bool VBFArchive::inject(const std::string& dst_name, const std::string& src_path
 					Block new_data_block = alloc(unused_data, front_file->data_size);
 					assert(new_data_block.offset > front_file->data_offset && new_data_block.size == front_file->data_size);
 
+					block_list.offset = std::min(block_list.offset, front_file->data_offset - (16 + files.size() * 48 + name_block_size));
 					block_list.size = (front_file->data_offset + front_file->data_size) - header_len;
 
 					uint64_t shift = (int64_t)new_data_block.offset - (int64_t)front_file->data_offset;

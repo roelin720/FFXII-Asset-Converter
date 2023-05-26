@@ -7,6 +7,8 @@
 #include "VBFArchive.h"
 #include "PhyreIOUtils.h"
 #include <filesystem>
+#include <windows.h>
+#include "Audio.h"
 
 FILE* hfopen(const char* pipe_name)
 {
@@ -86,7 +88,7 @@ void test(VBFArchive& archive, std::string dir)
 }
 
 int main(int argc, char* argv[])
-{
+{	
 	if (argc >= 6)
 	{
 		std::cout << "RUNNING PROCESS " << argv[argc - 2] << " " << argv[argc - 1] << std::endl;
@@ -116,6 +118,7 @@ int main(int argc, char* argv[])
 			std::cout << "INITIALISED" << std::endl;
 
 			err_code = !PhyreInterface::Run(argc - 2, (const char**)argv);
+			PhyreInterface::Free();
 		}
 
 		log_stream.flush();
@@ -127,5 +130,12 @@ int main(int argc, char* argv[])
 		std::cout << "PROCESSING COMPLETE" << std::endl;
 		return err_code;
 	}
-	return !Phyre::GUI().run();
+
+	if ((CoInitialize(NULL) != S_OK)) //needed for audio management
+	{
+		return -1;
+	}
+	int err_code = !Phyre::GUI().run();
+	CoUninitialize();
+	return err_code;
 }

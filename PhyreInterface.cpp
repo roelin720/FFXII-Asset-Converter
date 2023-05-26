@@ -76,7 +76,7 @@ bool PhyreInterface::Initialise()
 {
     SetUnhandledExceptionFilter(unhandled_handler);
 
-    if ((CoInitializeEx(nullptr, COINIT_MULTITHREADED)) < 0) //needed for DirectXTex
+    if ((CoInitializeEx(NULL, COINIT_MULTITHREADED)) < 0) //needed for DirectXTex
     {
         std::cerr << "COINIT_MULTITHREADED failed " << std::endl;
         return false;
@@ -87,6 +87,11 @@ bool PhyreInterface::Initialise()
         Phyre::DAE::Import(pFile, pScene);
     };
     return true;
+}
+
+void PhyreInterface::Free()
+{
+    CoUninitialize();
 }
 
 bool PhyreInterface::Run(int argc, const char** argv)

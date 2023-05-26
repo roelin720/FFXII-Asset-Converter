@@ -528,8 +528,7 @@ namespace
 	void open_natively(std::string path)
 	{
 		std::replace(path.begin(), path.end(), '/', '\\');
-		ShellExecuteA(NULL, "open", path.c_str(), NULL, NULL, SW_RESTORE);
-		system(("explorer \"" + path + "\"").c_str());
+		ShellExecuteA(NULL, "open", ("\"" + path + "\"").c_str(), NULL, NULL, SW_SHOWDEFAULT);
 	}
 
 	std::string right_aligned_elipsis_str(const std::vector<std::string>& folder, float max_len)
@@ -801,8 +800,6 @@ void Phyre::FileBrowser::draw_content()
 	draw_popup_messages();
 
 	ImGui::EndChild();
-
-	std::cout << ImGui::GetIO().Framerate << std::endl;
 }
 
 Phyre::FileBrowser::ArchiveRecord& Phyre::FileBrowser::get_vbf(const std::string& path)
@@ -1253,8 +1250,8 @@ ImRect Phyre::FileBrowser::draw_vbf_tree(const std::vector<std::string>& vbf_pat
 		{
 			std::vector<std::string> folder;
 			folder.reserve(vbf_path.size() + arc_foldername.size());
-			folder.insert(cur_parent_folder.end(), vbf_path.begin(), vbf_path.end());
-			folder.insert(cur_parent_folder.end(), arc_foldername.begin(), arc_foldername.end());
+			folder.insert(folder.end(), vbf_path.begin(), vbf_path.end());
+			folder.insert(folder.end(), arc_foldername.begin(), arc_foldername.end());
 			set_current_folder(folder);
 
 			if (ImGui::Selectable("Open")) push_pinned_folder(folder);

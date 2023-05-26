@@ -57,7 +57,7 @@ namespace Phyre
 			bool valid = false;
 		};
 		std::string id;
-		std::vector<std::string> cur_parent_folder = { "O:", "Final.Fantasy.XII.The.Zodiac.Age.v1.0.4.0", "Final.Fantasy.XII.The.Zodiac.Age.v1.0.4.0" };
+		std::vector<std::string> cur_parent_folder;
 		std::string cur_filename;
 		std::vector<std::string> drives;
 		std::map<std::string, ArchiveRecord> archives;

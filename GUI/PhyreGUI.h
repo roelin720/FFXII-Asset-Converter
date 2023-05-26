@@ -17,6 +17,7 @@ namespace Phyre
 		static constexpr int thread_count_max = 6;
 
 		static std::mutex log_mutex;
+		static std::mutex mute_mutex;
 		static ctpl::thread_pool thread_pool;
 
 		static Phyre::Logs logs;
@@ -25,8 +26,17 @@ namespace Phyre
 
 		GUITexture folder_icon;
 		GUITexture file_icon;
+		GUITexture play_icon;
+		GUITexture play_file_icon;
+		GUITexture play_muted_icon;
+		GUITexture play_unmuted_icon;
 
-		std::vector<bool> deferred_commands;
+		std::string play_path;
+		bool play_muted;
+
+		std::thread mute_thread;
+
+		bool exiting = false;
 		bool processing = false;
 		
 		Phyre::PathID dialog_pathID = Phyre::PathID_INVALID;
@@ -40,6 +50,10 @@ namespace Phyre
 
 		void load_icon_textures();
 		void free_icon_textures();
+
+		void load_play_config();
+		void save_play_config();
+		void draw_play_buttons();
 
 		bool draw_processing_button(std::string name);
 		bool draw_input_path(const char* label, char* buf, PathID pathID);

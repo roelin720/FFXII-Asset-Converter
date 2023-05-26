@@ -5,11 +5,20 @@
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
 #include "assimp/../../contrib/stb/stb_image.h"
-#include "Icons/file_white.h"
-#include "Icons/folder_white.h"
-#include "Icons/file_white.h"
+#include "assimp/../../contrib/rapidjson/include/rapidjson/document.h"
+#include "assimp/../../contrib/rapidjson/include/rapidjson/istreamwrapper.h"
+#include "assimp/../../contrib/rapidjson/include/rapidjson/writer.h"
+#include "assimp/../../contrib/rapidjson/include/rapidjson/stringbuffer.h"
+#include "assimp/../../contrib/rapidjson/include/rapidjson/ostreamwrapper.h"
+#include "Icons/file_icon_data.h"
+#include "Icons/folder_icon_data.h"
+#include "Icons/play_icon_data.h"
+#include "Icons/play_file_icon_data.h"
+#include "Icons/play_muted_icon_data.h"
+#include "Icons/play_unmuted_icon_data.h"
 #include "PhyreIOUtils.h"
 #include "Process.h"
+#include "Audio.h"
 #include "PhyreInterface.h"
 #include <filesystem>
 #include <format>
@@ -20,6 +29,7 @@ Phyre::PathHistory Phyre::GUI::history;
 ctpl::thread_pool Phyre::GUI::thread_pool;
 Phyre::Logs Phyre::GUI::logs;
 std::mutex Phyre::GUI::log_mutex;
+std::mutex Phyre::GUI::mute_mutex;
 
 namespace
 {
@@ -65,11 +75,11 @@ namespace
 		{
 			std::string parent = std::filesystem::path(path).parent_path().string();
 			std::replace(parent.begin(), parent.end(), '/', '\\');
-			system(("explorer \"" + parent + "\"").c_str());
+			ShellExecuteA(NULL, "open", ("\"" + parent + "\"").c_str(), NULL, NULL, SW_SHOWDEFAULT);
 		}
 		catch (const std::exception& e)
 		{
-			system(("explorer \"" + path + "\"").c_str());
+			ShellExecuteA(NULL, "open", ("\"" + path + "\"").c_str(), NULL, NULL, SW_SHOWDEFAULT);
 		}
 	}
 }
@@ -122,6 +132,7 @@ bool Phyre::GUI::run()
 	ImGui::GetStyle().AntiAliasedLines = false;
 
 	load_icon_textures();
+	load_play_config();
 	history.load();
 
 	if (!browser.init())
@@ -129,12 +140,28 @@ bool Phyre::GUI::run()
 		std::cerr << "Failed to initialise file browser" << std::endl;
 		return false;
 	}
+
 	// Main loop
 	int display_w, display_h;
 	glfwGetFramebufferSize(window, &display_w, &display_h);
 
 	LOG(Log_StartInfo, "After inputting the requisite file paths, click \"Pack\" or \"Unpack\" to execute processing.");
 	LOG(Log_StartInfo, "If any errors are encountered, please report them, and revert to the command-line version of this program in the meantime.");
+
+	std::thread mute_thread_tmp([this]()
+	{
+		while (!exiting)
+		{
+			mute_mutex.lock();
+			if (play_muted)
+			{
+				Audio::SetMute(PhyreIO::FileName(play_path), true);
+			}
+			mute_mutex.unlock();
+			Sleep(3000);
+		}
+	});
+	mute_thread.swap(mute_thread_tmp);
 
 	while (!glfwWindowShouldClose(window))
 	{
@@ -157,11 +184,14 @@ bool Phyre::GUI::run()
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 		glfwSwapBuffers(window);
 	}
+	exiting = true;
+
 	// Cleanup
 	history.save();
 	browser.free();
 
 	thread_pool.stop();
+	mute_thread.join();
 
 	free_icon_textures();
 	ImGui_ImplOpenGL3_Shutdown();
@@ -209,6 +239,9 @@ void Phyre::GUI::draw_ui()
 		history.save();
 	}
 	draw_input_path("Mod Output Asset/Folder", history.current[PathID_MOD], PathID_MOD);
+
+	ImGui::SameLine();
+	draw_play_buttons();
 
 	if (input_disabled) ImGui::EndDisabled();
 
@@ -272,8 +305,16 @@ bool Phyre::GUI::draw_file_dialog()
 		if (code != FileBrowser::DialogCode_Cancel)
 		{
 			std::string path = PhyreIO::Join(browser.cur_parent_folder) + "/" + browser.cur_filename;
-			history.push(path, dialog_pathID);
-			strcpy_s(history.current[dialog_pathID], history.max_path_size, path.c_str());
+			if (dialog_pathID == PathID_PLAY)
+			{
+				play_path = path;
+				save_play_config();
+			}
+			else
+			{
+				history.push(path, dialog_pathID);
+				strcpy_s(history.current[dialog_pathID], history.max_path_size, path.c_str());
+			}
 		}
 		dialog_pathID = PathID_INVALID;
 	}
@@ -281,16 +322,67 @@ bool Phyre::GUI::draw_file_dialog()
 	return true;
 }
 
+void Phyre::GUI::load_play_config()
+{
+	play_path = "";
+	try
+	{
+		if (std::filesystem::exists("play_cfg.json"))
+		{
+
+			std::ifstream stream("play_cfg.json");
+			rapidjson::IStreamWrapper isw{ stream };
+			rapidjson::Document doc;
+			doc.ParseStream(isw);
+
+			auto path = doc["play_path"].GetString();
+			if (std::filesystem::exists(path))
+			{
+				play_path = path;
+			}
+
+			play_muted = doc["play_muted"].GetBool();
+		}
+
+	}
+	catch (const std::exception&){}
+}
+
+void Phyre::GUI::save_play_config()
+{
+	try
+	{
+		rapidjson::Document doc;
+		std::string json = " { \"play_path\" : \"" + play_path + "\", \"play_muted\" : " + (play_muted ? "true" : "false") + " } ";
+		doc.Parse(json.c_str());
+
+		std::ofstream stream("play_cfg.json");
+		rapidjson::OStreamWrapper osw(stream);
+
+		rapidjson::Writer<rapidjson::OStreamWrapper> writer(osw);
+		doc.Accept(writer);
+	}
+	catch (const std::exception&) {}
+}
+
 void  Phyre::GUI::load_icon_textures()
 {
-	file_icon = GUITexture(file_white, sizeof(file_white));
-	folder_icon = GUITexture(folder_white, sizeof(folder_white));
+	file_icon = GUITexture(file_icon_data, sizeof(file_icon_data));
+	folder_icon = GUITexture(folder_icon_data, sizeof(folder_icon_data));
+	play_icon = GUITexture(play_icon_data, sizeof(play_icon_data));
+	play_file_icon = GUITexture(play_file_icon_data, sizeof(play_file_icon_data));
+	play_muted_icon = GUITexture(play_muted_icon_data, sizeof(play_muted_icon_data));
+	play_unmuted_icon = GUITexture(play_unmuted_icon_data, sizeof(play_unmuted_icon_data));
 }
 
 void  Phyre::GUI::free_icon_textures()
 {
 	file_icon.free();
 	folder_icon.free();
+	play_icon.free();
+	play_file_icon.free();
+	play_muted_icon.free();
+	play_unmuted_icon.free();
 }
 
 bool Phyre::GUI::draw_processing_button(std::string name)
@@ -325,6 +417,53 @@ bool Phyre::GUI::draw_processing_button(std::string name)
 	ImGui::SetCursorPos(end_pos);
 	ImGui::PopStyleVar();
 	return clicked;
+}
+
+void Phyre::GUI::draw_play_buttons()
+{
+	bool play_disabled = play_path.empty();
+	float width = play_file_icon.width * 3.0f + ImGui::GetStyle().ItemSpacing.x + ImGui::GetStyle().ItemInnerSpacing.x * 8.0f;
+
+	ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - width));
+	
+	if (ImGui::ImageButton(play_file_icon, ImVec2((float)play_file_icon.width, (float)play_file_icon.height)))
+	{
+		browser.set_current_path(play_path);
+		browser.filters = { {"Game EXE (*.exe)", { "exe" }}, { "All Files (*)", {"*"} } };
+		browser.require_existing_file = true;
+		dialog_pathID = PathID_PLAY;
+	}
+	ImGui::SameLine();
+	if (play_disabled) ImGui::BeginDisabled();
+	if (ImGui::ImageButton(play_icon, ImVec2((float)play_icon.width, (float)play_icon.height)))
+	{
+		if (!std::filesystem::exists(play_path))
+		{
+			LOG(Log_Error, "path does not exist - \"" + play_path + "\"");
+			play_path = "";
+			save_play_config();
+		}
+		else
+		{
+			std::string parent = std::filesystem::absolute(play_path).parent_path().string();
+			std::replace(parent.begin(), parent.end(), '/', '\\');
+			ShellExecuteA(NULL, "open", ("\"" + play_path + "\"").c_str(), NULL, parent.c_str(), SW_SHOWDEFAULT);
+		}
+	}
+
+	GUITexture& sound_icon = play_muted ? play_muted_icon : play_unmuted_icon;
+
+	ImGui::SameLine();
+	if (ImGui::ImageButton(sound_icon, ImVec2((float)sound_icon.width, (float)sound_icon.height)))
+	{
+		mute_mutex.lock();
+		play_muted = !play_muted;
+		Audio::SetMute(PhyreIO::FileName(play_path), play_muted);
+		mute_mutex.unlock();
+		save_play_config();
+	}
+
+	if (play_disabled) ImGui::EndDisabled();
 }
 
 bool Phyre::GUI::draw_input_path(const char* label, char* buf, PathID pathID)
@@ -790,6 +929,11 @@ bool Phyre::GUI::run_command(bool pack, bool unpack)
 			std::streambuf* old_cerr = std::cerr.rdbuf(err_stream.rdbuf());
 
 			LOG(Log_Info, "Injecting files into vbf - " + arc_path);
+
+			//LOG(Log_Info, "removing");
+			//std::filesystem::remove(arc_path + ".back");
+			//LOG(Log_Info, "copying");
+			//std::filesystem::copy_file(arc_path, arc_path + ".back");
 
 			if (!arc_rec->archive.inject_all(tmp_dst_dir, *node))
 			{

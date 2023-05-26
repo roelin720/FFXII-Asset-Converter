@@ -9,6 +9,7 @@ int main(int argc, char* argv[])
     if (PhyreInterface::Initialise())
     {
         err_code = !PhyreInterface::Run(argc, (const char**)argv);
+        PhyreInterface::Free();
     }
 
     if (err_code == 0)
