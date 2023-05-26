@@ -1485,7 +1485,7 @@ bool Phyre::FileBrowser::draw_footer()
 	float prompt_size = ImGui::CalcTextSize(file_name_prompt_text, file_name_prompt_text + sizeof(file_name_prompt_text)).x;
 	float name_input_size = std::max(avail / 3.0f, 100.0f);
 	float button_size = 80.0f;
-	float total_top_len = prompt_size + name_input_size + filters_size + ImGui::GetStyle().ItemSpacing.x;
+	float total_top_len = prompt_size + name_input_size + filters_size + (!filters.empty() ? ImGui::GetStyle().ItemSpacing.x : 0.0f);
 	float total_bottom_len = button_size * 2.0f + ImGui::GetStyle().ItemSpacing.x;
 
 	ImGui::SetCursorPosX(avail - total_top_len);
