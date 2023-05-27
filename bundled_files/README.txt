@@ -1,4 +1,4 @@
-FFXII Asset Converter version 1.3.0 by Roelin hosted by Nexus
+FFXII Asset Converter version 1.3.1 by Roelin hosted by Nexus
 
 A tool to convert most FFXII models and textures to and from common formats.
 With this tool, it can now be possible to create HD character textures and completely reshape any model.

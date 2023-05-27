@@ -1,7 +1,7 @@
 ﻿cmake_minimum_required (VERSION 3.8)
 
 project (PhyreConverter)
-set(CONVERTER_VERSION "1.3.0")
+set(CONVERTER_VERSION "1.3.1")
 
 option(POPULATE_BIN "place binaries in /bin and zip binaries with bundled_files to /bin" ON)
 
