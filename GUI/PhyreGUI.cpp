@@ -846,7 +846,7 @@ bool Phyre::GUI::run_command(bool pack, bool unpack)
 						continue;
 					}
 
-					std::string cmd = std::string(app_path) + " --unpack " + orig_file + " " + rep_file;
+					std::string cmd = std::string(app_path) + " --unpack \"" + orig_file + "\" \"" + rep_file + "\"";
 					commands.push_back(cmd);
 				}
 			}
@@ -870,7 +870,7 @@ bool Phyre::GUI::run_command(bool pack, bool unpack)
 						}
 						std::string out_file = std::string(out_path) + "/" + fs::relative(orig_file, orig_path).string();
 
-						std::string cmd = std::string(app_path) + " --pack " + orig_file + " " + rep_file + " " + out_file;
+						std::string cmd = std::string(app_path) + " --pack \"" + orig_file + "\" \"" + rep_file + "\" \"" + out_file + "\"";
 						commands.push_back(cmd);
 					}
 				}

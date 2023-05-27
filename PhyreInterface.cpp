@@ -224,9 +224,9 @@ bool PhyreInterface::Run(int argc, const char** argv)
                 std::clog << UsagePrompt() << std::endl;
                 return false;
             }
-            std::string orig_path = fs::absolute(argv[2]).string();
-            std::string rep_path = fs::absolute(argv[3]).string();
-            std::string out_path = fs::absolute(argv[4]).string();
+            std::string orig_path = fs::absolute(PhyreIO::Normalise(argv[2])).string();
+            std::string rep_path = fs::absolute(PhyreIO::Normalise(argv[3])).string();
+            std::string out_path = fs::absolute(PhyreIO::Normalise(argv[4])).string();
 
             if (!PhyreIO::VerifyFileAccessible(orig_path) ||
                 !PhyreIO::VerifyFileAccessible(rep_path) ||
@@ -328,8 +328,8 @@ bool PhyreInterface::Run(int argc, const char** argv)
                 return false;
             }
 
-            std::string orig_path = fs::absolute(argv[2]).string();
-            std::string out_path = fs::absolute(argv[3]).string();
+            std::string orig_path = fs::absolute(PhyreIO::Normalise(argv[2])).string();
+            std::string out_path = fs::absolute(PhyreIO::Normalise(argv[3])).string();
 
             if (!PhyreIO::VerifyFileAccessible(orig_path) ||
                 !PhyreIO::VerifyDifferent(orig_path, out_path) ||

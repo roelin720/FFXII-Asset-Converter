@@ -323,10 +323,10 @@ std::string PhyreIO::BranchFromPath(const std::string& deviating_path, const std
 std::string PhyreIO::Normalise(const std::string& path)
 {
     auto b = path.begin(), e = path.begin() + strlen(path.c_str());
-    while (b != e && (isspace(*b) || *b == '\\' || *b == '/')) {
+    while (b != e && (isspace(*b) || *b == '\\' || *b == '/' || *b == '\"')) {
         ++b;
     }
-    while (b != e && (isspace(*(e - 1)) || *(e - 1) == '\\' || *(e - 1) == '/')) {
+    while (b != e && (isspace(*(e - 1)) || *(e - 1) == '\\' || *(e - 1) == '/' || *(e - 1) == '\"')) {
         --e;
     }
     if (b != e) 
