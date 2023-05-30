@@ -3,7 +3,7 @@
 #include "PhyreGUILogs.h"
 #include "PhyreGUIPathHistory.h"
 #include "PhyreGUIBrowser.h"
-#include "PhyreGUITexture.h"
+#include "PhyreGUIIcon.h"
 #include <map>
 #include "imgui.h"
 
@@ -24,12 +24,12 @@ namespace Phyre
 		static Phyre::PathHistory history;
 		static Phyre::FileBrowser browser;
 
-		GUITexture folder_icon;
-		GUITexture file_icon;
-		GUITexture play_icon;
-		GUITexture play_file_icon;
-		GUITexture play_muted_icon;
-		GUITexture play_unmuted_icon;
+		GUIIcon folder_icon;
+		GUIIcon file_icon;
+		GUIIcon play_icon;
+		GUIIcon play_file_icon;
+		GUIIcon play_muted_icon;
+		GUIIcon play_unmuted_icon;
 
 		std::string play_path;
 		bool play_muted;

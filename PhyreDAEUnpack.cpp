@@ -6,6 +6,7 @@
 #include <assimp/Importer.hpp>
 #include <assimp/Exporter.hpp>
 #include <assimp/BaseImporter.h>
+#include <ranges>
 
 using namespace Assimp;
 using namespace Phyre::DAE;
@@ -14,23 +15,6 @@ using namespace PhyreIO;
 namespace 
 {
     DEFINE_REQUIRED_CHUNKS(DAE, PMesh, PMatrix4, PMeshSegment, PDataBlock, PSkinBoneRemap );
-    
-    template<typename T>
-    T* realloc(const T* arr, const size_t old_size, const size_t new_size)
-    {
-        if (new_size)
-        {
-            T *new_arr = new T[new_size];
-            for (size_t i = 0; i < std::min(old_size, new_size); ++i)
-            {
-                new_arr[i] = arr[i];
-            }
-            delete[] arr;
-            return new_arr;
-        }
-        delete[] arr;
-        return nullptr;
-    }
 }
 
 bool Phyre::DAE::Unpack(const std::string& orig_path, const std::string& out_path)
@@ -38,8 +22,13 @@ bool Phyre::DAE::Unpack(const std::string& orig_path, const std::string& out_pat
     std::clog << "Importing " << PhyreIO::FileName(orig_path) << std::endl;
 
     Assimp::Importer importer;
-    if (const aiScene* scene = importer.ReadFile(orig_path, aiProcess_MakeLeftHanded | aiProcess_FlipUVs | aiProcess_Triangulate))
+    if (const aiScene* scene = importer.ReadFile(orig_path, aiProcess_FlipUVs | aiProcess_Triangulate))
     {
+        FlipNormals((aiScene*)scene);
+
+        //currently in order to export the scene at the correct scale, the fbx exporter is modified directly to set "UnitScaleFactor" to 100
+        //not ideal
+
         std::clog << "Exporting " << PhyreIO::FileName(out_path) << std::endl;
 
         Assimp::Exporter exporter;
@@ -141,11 +130,16 @@ void Phyre::DAE::Import(const std::string &pFile, aiScene *pScene)
         seek(stream, -1, std::ios_base::cur);
     }
 
-    std::vector<int32_t> bone_parent_indices = std::vector<int32_t>(bone_node_count);
+    std::vector<int32_t> bone_parent_indices(bone_node_count);
+    std::vector<int32_t> bone_child_counts(bone_node_count, 0);
 
     for (int64_t i = 0; i < bone_node_count; ++i)
     {
-       bone_parent_indices[i] = read<int32_t>(stream);
+        int64_t parent_index = bone_parent_indices[i] = read<int32_t>(stream);
+        if (parent_index >= 0)
+        {
+            ++bone_child_counts[parent_index];
+        }
     }
 
     std::vector<aiNode*> bone_nodes;
@@ -160,12 +154,13 @@ void Phyre::DAE::Import(const std::string &pFile, aiScene *pScene)
 
         for (int32_t i = 0; i < bone_node_count; ++i)
         {
+            int32_t parent_index = bone_parent_indices[i];
+            int32_t child_count = bone_child_counts[i];
+
             aiNode *bone_node = bone_nodes[i] = new aiNode();
-            bone_node->mChildren = new aiNode *[bone_node_count];
+            bone_node->mChildren = child_count > 0 ? new aiNode *[child_count] : nullptr;
             bone_node->mTransformation = read<aiMatrix4x4>(stream);
             bone_node->mName = aiString("Bone" + std::to_string(i));
-
-            int32_t parent_index = bone_parent_indices[i];
 
             if (parent_index >= 0)
             {
@@ -175,29 +170,55 @@ void Phyre::DAE::Import(const std::string &pFile, aiScene *pScene)
                 bone_node->mParent = parent;
             }
         }
-        bone_nodes[0]->mParent = pScene->mRootNode;
         pScene->mRootNode->mChildren[0] = bone_nodes[0];
-        aiMatrix4x4::Scaling(aiVector3D(100.0f, 100.0f, 100.0f), bone_nodes[0]->mTransformation = aiMatrix4x4());
-
-        for (int i = 0; i < bone_node_count; ++i)
-        {
-            aiNode &bone_node = *bone_nodes[i];
-            bone_node.mChildren = realloc(bone_node.mChildren, bone_node_count, bone_node.mNumChildren);
-        }
     }
     else
     {
         pScene->mRootNode->mChildren[0] = new aiNode("Bone0");
-        pScene->mRootNode->mChildren[0]->mParent = pScene->mRootNode;
     }
-    pScene->mNumMeshes = (uint32_t)mesh_count;
-    pScene->mMeshes = new aiMesh *[mesh_count];
-    pScene->mRootNode->mNumMeshes = (uint32_t)mesh_count;
-    pScene->mRootNode->mMeshes = new unsigned int[mesh_count];
+
+    aiNode* mesh_root = pScene->mRootNode->mChildren[0];
+    mesh_root->mParent = pScene->mRootNode;
+    mesh_root->mNumMeshes = (uint32_t)mesh_count;
+    mesh_root->mMeshes = new unsigned int[mesh_count];
+
+    pScene->mNumMeshes = (uint32_t)mesh_count + !!(mesh_root->mNumChildren > 1);
+    pScene->mMeshes = new aiMesh *[mesh_count + !!(mesh_root->mNumChildren > 1)];
+
+    // exists to fix the bug where the armature modifier isn't applied everywhere if Bone0 has more than one child
+    // a proper solution should be investigated
+    if (mesh_root->mNumChildren > 1) 
+    {
+        aiMesh* bone0_mesh = pScene->mMeshes[mesh_count] = new aiMesh();
+        pScene->mRootNode->mNumMeshes = 1;
+        pScene->mRootNode->mMeshes = new unsigned int[1];
+        pScene->mRootNode->mMeshes[0] = mesh_count;
+        bone0_mesh->mName = "Mesh" + std::to_string(mesh_count) + "[ignore]";
+        bone0_mesh->mNumFaces = 1;
+        bone0_mesh->mNumVertices = 1;
+        bone0_mesh->mNumUVComponents[0] = 1;
+        bone0_mesh->mVertices = new aiVector3D[1]();
+        bone0_mesh->mNormals = new aiVector3D[1]();
+        bone0_mesh->mTangents = new aiVector3D[1]();
+        bone0_mesh->mBitangents = new aiVector3D[1]();
+        bone0_mesh->mColors[0] = new aiColor4D[1]();
+        bone0_mesh->mTextureCoords[0] = new aiVector3D[1]();
+        bone0_mesh->mFaces = new aiFace[1]();
+        bone0_mesh->mFaces->mNumIndices = 1;
+        bone0_mesh->mFaces->mIndices = new unsigned int[1] { 0 };
+        bone0_mesh->mNumBones = mesh_root->mNumChildren - 1;
+        bone0_mesh->mBones = new aiBone * [mesh_root->mNumChildren - 1];
+
+        for (uint32_t i = 0; i < bone0_mesh->mNumBones; ++i)
+        {
+            bone0_mesh->mBones[i] = new aiBone();
+            bone0_mesh->mBones[i]->mName = mesh_root->mChildren[i + 1]->mName;
+        }
+    }
 
     for (uint32_t i = 0; i < mesh_count; ++i)
     {
-        pScene->mRootNode->mMeshes[i] = i;
+        mesh_root->mMeshes[i] = i;
         seek(stream, c_mesh_meta.data_offset + int64_t(i) * 61, std::ios_base::beg);
 
         Phyre::Mesh &mesh = (Phyre::Mesh&) * (pScene->mMeshes[i] = new Phyre::Mesh());
@@ -370,6 +391,32 @@ void Phyre::DAE::Import(const std::string &pFile, aiScene *pScene)
             }
 
             bone_ref_offset = tell(stream);
+        }
+    }
+}
+
+void Phyre::DAE::FlipNormals(aiScene* scene)
+{
+    for (unsigned int i = 0; i < scene->mNumMeshes; ++i)
+    {
+        aiMesh* mesh = scene->mMeshes[i];
+        for (unsigned int j = 0; j < mesh->mNumVertices; ++j)
+        {
+            if (mesh->HasNormals()) {
+                mesh->mNormals[j].x *= -1.0f;
+                mesh->mNormals[j].y *= -1.0f;
+                mesh->mNormals[j].z *= -1.0f;
+
+            }
+            if (mesh->HasTangentsAndBitangents()) {
+                mesh->mTangents[j].x *= -1.0f;
+                mesh->mTangents[j].y *= -1.0f;
+                mesh->mTangents[j].z *= -1.0f;
+                mesh->mBitangents[j].x *= -1.0f;
+                mesh->mBitangents[j].y *= -1.0f;
+                mesh->mBitangents[j].z *= -1.0f;
+
+            }
         }
     }
 }

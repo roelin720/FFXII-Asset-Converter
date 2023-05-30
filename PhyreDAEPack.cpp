@@ -34,7 +34,7 @@ bool Phyre::DAE::Pack(const std::string& original_path, const std::string& repla
 {
     std::clog << "Importing " << PhyreIO::FileName(replacement_path) << std::endl;
 
-    uint32_t import_flags = BaseImporter::SimpleExtensionCheck(replacement_path, "dae.phyre") ? 0 : aiProcess_MakeLeftHanded | aiProcess_FlipUVs | aiProcess_CalcTangentSpace | aiProcess_JoinIdenticalVertices | aiProcess_Triangulate;
+    uint32_t import_flags = BaseImporter::SimpleExtensionCheck(replacement_path, "dae.phyre") ? 0 : aiProcess_FlipUVs | aiProcess_CalcTangentSpace | aiProcess_JoinIdenticalVertices | aiProcess_Triangulate;
 
     Assimp::Importer replacement_importer;
     const aiScene* replacement_scene = replacement_importer.ReadFile(replacement_path, import_flags);
@@ -43,6 +43,8 @@ bool Phyre::DAE::Pack(const std::string& original_path, const std::string& repla
         std::cerr << "Failed to import replacement scene " << output_path << " " << (replacement_importer.GetErrorString()) << std::endl;
         return false;
     }
+
+    FlipNormals((aiScene*)replacement_scene);
 
     std::clog << "Importing " << PhyreIO::FileName(original_path) << std::endl;
 
@@ -94,8 +96,10 @@ bool Phyre::DAE::Export(aiScene* orig_scene, const aiScene* ref_scene, const std
         read(istream, orig_data.data(), orig_mesh_data_offset);
         istream.close();
 
-        std::vector<aiMesh*> ref_meshes(orig_scene->mNumMeshes, nullptr);
-        for (int64_t i = 0; i < orig_scene->mNumMeshes; ++i)
+        int64_t mesh_count = orig_scene->mRootNode->mChildren[0]->mNumMeshes;
+
+        std::vector<aiMesh*> ref_meshes(mesh_count, nullptr);
+        for (int64_t i = 0; i < mesh_count; ++i)
         {
             aiString mesh_name = aiString("Mesh" + std::to_string(i));
             aiMesh** mesh_end = ref_scene->mMeshes + ref_scene->mNumMeshes;
@@ -113,7 +117,7 @@ bool Phyre::DAE::Export(aiScene* orig_scene, const aiScene* ref_scene, const std
             }        
         }
 
-        for (uint32_t i = 0; i < orig_scene->mNumMeshes; ++i) 
+        for (uint32_t i = 0; i < mesh_count; ++i) 
         {
             aiMesh*& rmesh = ref_meshes[i];
             if (rmesh == nullptr || rmesh->mNumVertices <= 2 || rmesh->mNumFaces <= 0)
@@ -128,7 +132,7 @@ bool Phyre::DAE::Export(aiScene* orig_scene, const aiScene* ref_scene, const std
         int16_t max_bone_ref = 0;
         memset(bone_ref_map, -1, sizeof(bone_ref_map));
 
-        for (int64_t i = 0, data_offset = orig_bone_ref_offset; i < orig_scene->mNumMeshes; ++i) 
+        for (int64_t i = 0, data_offset = orig_bone_ref_offset; i < mesh_count; ++i) 
         {
             aiMesh& omesh = *orig_scene->mMeshes[i];
             for (int64_t j = 0; j < omesh.mNumBones; ++j) 
@@ -141,10 +145,10 @@ bool Phyre::DAE::Export(aiScene* orig_scene, const aiScene* ref_scene, const std
             data_offset += (int64_t)omesh.mNumBones * 4;
         }
 
-        std::vector<std::vector<int32_t>> bone_weight_map(orig_scene->mNumMeshes);
+        std::vector<std::vector<int32_t>> bone_weight_map(mesh_count);
 
         uint64_t data_offset = orig_bone_ref_offset;
-        for (uint32_t i = 0; i < orig_scene->mNumMeshes; ++i) 
+        for (uint32_t i = 0; i < mesh_count; ++i) 
         {
             aiMesh& omesh = *orig_scene->mMeshes[i];
             aiMesh& rmesh = *ref_meshes[i];
@@ -203,7 +207,7 @@ bool Phyre::DAE::Export(aiScene* orig_scene, const aiScene* ref_scene, const std
         seek(ostream, 0, std::ios_base::beg);
         write(ostream, orig_data.data(), orig_mesh_data_offset);
 
-        for (uint32_t i = 0; i < orig_scene->mNumMeshes; ++i)
+        for (uint32_t i = 0; i < mesh_count; ++i)
         {
             Phyre::Mesh& omesh = (Phyre::Mesh&)*orig_scene->mMeshes[i];
             aiMesh& rmesh = *ref_meshes[i];
@@ -255,7 +259,7 @@ bool Phyre::DAE::Export(aiScene* orig_scene, const aiScene* ref_scene, const std
 
         seek(ostream, 0, std::ios_base::end);
 
-        for (uint32_t i = 0; i < orig_scene->mNumMeshes; ++i)
+        for (uint32_t i = 0; i < mesh_count; ++i)
         {
             Phyre::Mesh& omesh = (Phyre::Mesh&)*orig_scene->mMeshes[i];
             aiMesh& rmesh = *ref_meshes[i];

@@ -4,7 +4,6 @@
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
-#include "assimp/../../contrib/stb/stb_image.h"
 #include "assimp/../../contrib/rapidjson/include/rapidjson/document.h"
 #include "assimp/../../contrib/rapidjson/include/rapidjson/istreamwrapper.h"
 #include "assimp/../../contrib/rapidjson/include/rapidjson/writer.h"
@@ -158,7 +157,7 @@ bool Phyre::GUI::run()
 				Audio::SetMute(PhyreIO::FileName(play_path), true);
 			}
 			mute_mutex.unlock();
-			Sleep(3000);
+			Sleep(2000);
 		}
 	});
 	mute_thread.swap(mute_thread_tmp);
@@ -191,7 +190,6 @@ bool Phyre::GUI::run()
 	browser.free();
 
 	thread_pool.stop();
-	mute_thread.join();
 
 	free_icon_textures();
 	ImGui_ImplOpenGL3_Shutdown();
@@ -200,6 +198,8 @@ bool Phyre::GUI::run()
 
 	glfwDestroyWindow(window);
 	glfwTerminate();
+
+	mute_thread.join();
 
 	return true;
 }
@@ -367,12 +367,12 @@ void Phyre::GUI::save_play_config()
 
 void  Phyre::GUI::load_icon_textures()
 {
-	file_icon = GUITexture(file_icon_data, sizeof(file_icon_data));
-	folder_icon = GUITexture(folder_icon_data, sizeof(folder_icon_data));
-	play_icon = GUITexture(play_icon_data, sizeof(play_icon_data));
-	play_file_icon = GUITexture(play_file_icon_data, sizeof(play_file_icon_data));
-	play_muted_icon = GUITexture(play_muted_icon_data, sizeof(play_muted_icon_data));
-	play_unmuted_icon = GUITexture(play_unmuted_icon_data, sizeof(play_unmuted_icon_data));
+	file_icon = GUIIcon(file_icon_data, sizeof(file_icon_data));
+	folder_icon = GUIIcon(folder_icon_data, sizeof(folder_icon_data));
+	play_icon = GUIIcon(play_icon_data, sizeof(play_icon_data));
+	play_file_icon = GUIIcon(play_file_icon_data, sizeof(play_file_icon_data));
+	play_muted_icon = GUIIcon(play_muted_icon_data, sizeof(play_muted_icon_data));
+	play_unmuted_icon = GUIIcon(play_unmuted_icon_data, sizeof(play_unmuted_icon_data));
 }
 
 void  Phyre::GUI::free_icon_textures()
@@ -451,7 +451,7 @@ void Phyre::GUI::draw_play_buttons()
 		}
 	}
 
-	GUITexture& sound_icon = play_muted ? play_muted_icon : play_unmuted_icon;
+	GUIIcon& sound_icon = play_muted ? play_muted_icon : play_unmuted_icon;
 
 	ImGui::SameLine();
 	if (ImGui::ImageButton(sound_icon, ImVec2((float)sound_icon.width, (float)sound_icon.height)))
@@ -811,12 +811,12 @@ bool Phyre::GUI::run_command(bool pack, bool unpack)
 		{
 			if (unpack)
 			{
-				std::string cmd = std::string(app_path) + " --unpack " + orig_path + " " + rep_path;
+				std::string cmd = std::string(app_path) + " --unpack \"" + orig_path + "\" \"" + rep_path + "\"";
 				commands.push_back(cmd);
 			}
 			if (pack)
 			{
-				std::string cmd = std::string(app_path) + " --pack " + orig_path + " " + rep_path + " " + out_path;
+				std::string cmd = std::string(app_path) + " --pack \"" + orig_path + "\" \"" + rep_path + "\" \"" + out_path + "\"";
 				commands.push_back(cmd);
 			}
 		}
@@ -900,13 +900,13 @@ bool Phyre::GUI::run_command(bool pack, bool unpack)
 				std::string cout, cerr;
 				process.Execute(cmd, cout, cerr, id);
 				
-				if (cout.empty() == false)
-				{
-					LOG(Log_ConvInfo, cout);
-				}
 				if (cerr.empty() == false)
 				{
 					LOG(Log_ConvError, cerr);
+				}
+				if (cout.empty() == false)
+				{
+					LOG(Log_ConvInfo, cout);
 				}
 				
 				tasks_completed[i] = true;

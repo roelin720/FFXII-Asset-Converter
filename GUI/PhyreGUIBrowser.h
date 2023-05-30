@@ -2,7 +2,7 @@
 #include "ctpl_stl.h"
 #include "PhyreGUILogs.h"
 #include "PhyreGUIPathHistory.h"
-#include "PhyreGUITexture.h"
+#include "PhyreGUIIcon.h"
 #include "VBFArchive.h"
 #include <vector>
 #include <string>
@@ -74,23 +74,23 @@ namespace Phyre
 
 		std::vector<std::pair<float, std::function<void(float)>>> popup_messages;
 
-		GUITexture folder_icon;
-		GUITexture file_icon;
-		GUITexture archive_icon;
-		GUITexture model_icon;
-		GUITexture image_icon;
-		GUITexture music_icon;
-		GUITexture text_icon;
-		GUITexture video_icon;
-		GUITexture exe_icon;
-		GUITexture dll_icon;
-		GUITexture pin_icon;
-		GUITexture left_icon;
-		GUITexture right_icon;
-		GUITexture up_icon;
-		GUITexture down_icon;
-		GUITexture left_icon_tiny;
-		GUITexture right_icon_tiny;
+		GUIIcon folder_icon;
+		GUIIcon file_icon;
+		GUIIcon archive_icon;
+		GUIIcon model_icon;
+		GUIIcon image_icon;
+		GUIIcon music_icon;
+		GUIIcon text_icon;
+		GUIIcon video_icon;
+		GUIIcon exe_icon;
+		GUIIcon dll_icon;
+		GUIIcon pin_icon;
+		GUIIcon left_icon;
+		GUIIcon right_icon;
+		GUIIcon up_icon;
+		GUIIcon down_icon;
+		GUIIcon left_icon_tiny;
+		GUIIcon right_icon_tiny;
 
 		DialogCode dialog_code = DialogCode_None;
 

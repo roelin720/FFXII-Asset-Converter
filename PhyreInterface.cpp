@@ -1,6 +1,6 @@
 #include "PhyreInterface.h"
 #include <iostream>
-#include "AssimpImportHook/AssimpImportHook.h"
+#include "AssimpImportHook.h"
 #include <assimp/cimport.h>
 #include "PhyreIOUtils.h"
 #include "PhyreDAEUnpack.h"

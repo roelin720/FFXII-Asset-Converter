@@ -588,23 +588,23 @@ bool Phyre::FileBrowser::init()
 
 	folder_history_end = folder_history.end();
 
-	file_icon = GUITexture(file_icon_small_data, sizeof(file_icon_small_data));
-	folder_icon = GUITexture(folder_icon_small_data, sizeof(folder_icon_small_data));
-	archive_icon = GUITexture(archive_icon_small_data, sizeof(archive_icon_small_data));
-	model_icon = GUITexture(model_icon_small_data, sizeof(model_icon_small_data));
-	image_icon = GUITexture(image_icon_small_data, sizeof(image_icon_small_data));
-	text_icon = GUITexture(text_icon_small_data, sizeof(text_icon_small_data));
-	music_icon = GUITexture(music_icon_small_data, sizeof(music_icon_small_data));
-	video_icon = GUITexture(video_icon_small_data, sizeof(video_icon_small_data));
-	exe_icon = GUITexture(exe_icon_small_data, sizeof(exe_icon_small_data));
-	dll_icon = GUITexture(dll_icon_small_data, sizeof(dll_icon_small_data));
-	left_icon = GUITexture(left_icon_data, sizeof(left_icon_data));
-	right_icon = GUITexture(right_icon_data, sizeof(right_icon_data));
-	up_icon = GUITexture(up_icon_data, sizeof(up_icon_data));
-	down_icon = GUITexture(down_icon_data, sizeof(down_icon_data));
-	left_icon_tiny = GUITexture(left_icon_tiny_data, sizeof(left_icon_tiny_data));
-	right_icon_tiny = GUITexture(right_icon_tiny_data, sizeof(right_icon_tiny_data));
-	pin_icon = GUITexture(pin_icon_small_data, sizeof(pin_icon_small_data));
+	file_icon = GUIIcon(file_icon_small_data, sizeof(file_icon_small_data));
+	folder_icon = GUIIcon(folder_icon_small_data, sizeof(folder_icon_small_data));
+	archive_icon = GUIIcon(archive_icon_small_data, sizeof(archive_icon_small_data));
+	model_icon = GUIIcon(model_icon_small_data, sizeof(model_icon_small_data));
+	image_icon = GUIIcon(image_icon_small_data, sizeof(image_icon_small_data));
+	text_icon = GUIIcon(text_icon_small_data, sizeof(text_icon_small_data));
+	music_icon = GUIIcon(music_icon_small_data, sizeof(music_icon_small_data));
+	video_icon = GUIIcon(video_icon_small_data, sizeof(video_icon_small_data));
+	exe_icon = GUIIcon(exe_icon_small_data, sizeof(exe_icon_small_data));
+	dll_icon = GUIIcon(dll_icon_small_data, sizeof(dll_icon_small_data));
+	left_icon = GUIIcon(left_icon_data, sizeof(left_icon_data));
+	right_icon = GUIIcon(right_icon_data, sizeof(right_icon_data));
+	up_icon = GUIIcon(up_icon_data, sizeof(up_icon_data));
+	down_icon = GUIIcon(down_icon_data, sizeof(down_icon_data));
+	left_icon_tiny = GUIIcon(left_icon_tiny_data, sizeof(left_icon_tiny_data));
+	right_icon_tiny = GUIIcon(right_icon_tiny_data, sizeof(right_icon_tiny_data));
+	pin_icon = GUIIcon(pin_icon_small_data, sizeof(pin_icon_small_data));
 	return true;
 }
 
@@ -938,7 +938,7 @@ void Phyre::FileBrowser::draw_current_folder_pane()
 			{
 				ImGui::TableNextRow();
 				ImGui::TableNextColumn();
-				GUITexture& icon =
+				GUIIcon& icon =
 					children[i].typeID == FileInfo::Folder ? folder_icon :
 					children[i].typeID == FileInfo::Archive ? archive_icon :
 					children[i].typeID == FileInfo::VBFArchive ? archive_icon :
