@@ -1,4 +1,5 @@
 #include "Process.h"
+#include "ConverterInterface.h"
 #include <tchar.h>
 #include <stdio.h> 
 #include <strsafe.h>
@@ -6,108 +7,113 @@
 #include <thread>
 #include <iostream>
 
-constexpr size_t buffSize = 4096;
+namespace {
 
-void ErrorExit(const char* lpszFunction)
-{
-    LPVOID lpMsgBuf = nullptr;
-    LPVOID lpDisplayBuf = nullptr;
-    DWORD dw = GetLastError();
+    constexpr size_t buffSize = 4096;
 
-    FormatMessage(
-        FORMAT_MESSAGE_ALLOCATE_BUFFER |
-        FORMAT_MESSAGE_FROM_SYSTEM |
-        FORMAT_MESSAGE_IGNORE_INSERTS,
-        NULL,
-        dw,
-        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-        (LPTSTR)&lpMsgBuf,
-        0, NULL);
+    void ErrorExit(const char* lpszFunction)
+    {
+        LPVOID lpMsgBuf = nullptr;
+        LPVOID lpDisplayBuf = nullptr;
+        DWORD dw = GetLastError();
 
-    lpDisplayBuf = (LPVOID)LocalAlloc(LMEM_ZEROINIT,
-        (lstrlen((LPCTSTR)lpMsgBuf) + lstrlen((LPCTSTR)lpszFunction) + 40) * sizeof(TCHAR));
-    StringCchPrintf((LPTSTR)lpDisplayBuf,
-        LocalSize(lpDisplayBuf) / sizeof(TCHAR),
-        TEXT("%s failed with error %d: %s"),
-        lpszFunction, dw, lpMsgBuf);
-    MessageBox(NULL, (LPCTSTR)lpDisplayBuf, TEXT("Error"), MB_OK);
+        FormatMessage(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER |
+            FORMAT_MESSAGE_FROM_SYSTEM |
+            FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL,
+            dw,
+            MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+            (LPTSTR)&lpMsgBuf,
+            0, NULL);
 
-    LocalFree(lpMsgBuf);
-    LocalFree(lpDisplayBuf);
-    ExitProcess(1);
+        lpDisplayBuf = (LPVOID)LocalAlloc(LMEM_ZEROINIT,
+            (lstrlen((LPCTSTR)lpMsgBuf) + lstrlen((LPCTSTR)lpszFunction) + 40) * sizeof(TCHAR));
+        StringCchPrintf((LPTSTR)lpDisplayBuf,
+            LocalSize(lpDisplayBuf) / sizeof(TCHAR),
+            TEXT("%s failed with error %d: %s"),
+            lpszFunction, dw, lpMsgBuf);
+        MessageBox(NULL, (LPCTSTR)lpDisplayBuf, TEXT("Error"), MB_OK);
+
+        LocalFree(lpMsgBuf);
+        LocalFree(lpDisplayBuf);
+        ExitProcess(1);
+    }
 }
-
 #define PIPE_TIMEOUT  1000
+#define BUFSIZE 1024
 //#define ErrorExit(x) {__debugbreak();}
 
-int Process::Execute(const std::string& cmd, std::string& cout, std::string& cerr, const std::string& id)
+int Process::RunConvertProcess(const std::string& cmd, std::string& out, std::string& warn, std::string& err, const std::string& id)
 {
     SECURITY_ATTRIBUTES saAttr = {};
 
-    printf("\n->Start of parent execution.\n");
+    HANDLE hJob = CreateJobObject(NULL, NULL);
+    if (hJob == NULL) {
+        std::cerr << "Failed to create Job Object. Error: " << GetLastError() << std::endl;
+        return 1;
+    }
 
-    // Set the bInheritHandle flag so pipe handles are inherited. 
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = { 0 };
+    jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+    if (!SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli))) {
+        std::cerr << "Failed to set Job Object information. Error: " << GetLastError() << std::endl;
+        CloseHandle(hJob);
+        return 1;
+    }
 
     saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
     saAttr.bInheritHandle = TRUE;
     saAttr.lpSecurityDescriptor = NULL;
 
-    std::string out_pipe_name = "\\\\.\\pipe\\stdOut" + id;
-    HANDLE out_pipe = CreateNamedPipeA(out_pipe_name.c_str(),
-        PIPE_ACCESS_INBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE,
-        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE,
-        1, 1 << 16, 1 << 16, PIPE_TIMEOUT, &saAttr);
-    if (out_pipe == INVALID_HANDLE_VALUE)
+    struct Pipe
     {
-        ErrorExit(TEXT("CreatePipe stdOut"));
-        return -1;
+        std::string name;
+        HANDLE handle;
+    };
+    
+    Pipe pipes[3] =
+    {
+        {"\\\\.\\pipe\\out" + id},
+        {"\\\\.\\pipe\\warn" + id},
+        {"\\\\.\\pipe\\err" + id}
+    };
+
+    for (Pipe& pipe : pipes)
+    {
+        pipe.handle = CreateNamedPipeA(pipe.name.c_str(),
+            PIPE_ACCESS_INBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE,
+            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE,
+            1, 1 << 16, 1 << 16, PIPE_TIMEOUT, &saAttr);
+        if (pipe.handle == INVALID_HANDLE_VALUE)
+        {
+            ErrorExit(TEXT(("CreatePipe " + pipe.name).c_str()));
+            return -1;
+        }
     }
 
-    std::string err_pipe_name = "\\\\.\\pipe\\stdErr" + id;
-    HANDLE err_pipe = CreateNamedPipeA(err_pipe_name.c_str(),
-        PIPE_ACCESS_INBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE,
-        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE,
-        1, 1 << 16, 1 << 16, PIPE_TIMEOUT, &saAttr);
-    if (err_pipe == INVALID_HANDLE_VALUE)
-    {
-        ErrorExit(TEXT("CreatePipe stdErr"));
-        return -1;
-    }
-
-    std::string full_cmd = cmd + " " + out_pipe_name + " " + err_pipe_name;
+    std::string full_cmd = cmd + " " + pipes[0].name + " " + pipes[1].name + " " + pipes[2].name + " " + EnumToString(GUITask::Convert);
 
     PROCESS_INFORMATION piProcInfo;
     STARTUPINFOA siStartInfo;
     BOOL bSuccess = FALSE;
 
-    // Set up members of the PROCESS_INFORMATION structure. 
-
     ZeroMemory(&piProcInfo, sizeof(PROCESS_INFORMATION));
-
-    // Set up members of the STARTUPINFO structure. 
-    // This structure specifies the STDIN and STDOUT handles for redirection.
-
     ZeroMemory(&siStartInfo, sizeof(STARTUPINFO));
     siStartInfo.cb = sizeof(STARTUPINFO);
 
     // Create the child process. 
 
-    bSuccess = CreateProcessA(NULL,
-        (char*)full_cmd.c_str(),     // command line 
-        NULL,          // process security attributes 
-        NULL,          // primary thread security attributes 
-        TRUE,          // handles are inherited 
-        0,             // creation flags 
-        NULL,          // use parent's environment 
-        NULL,          // use parent's current directory 
-        &siStartInfo,  // STARTUPINFO pointer 
-        &piProcInfo);  // receives PROCESS_INFORMATION 
+    bSuccess = CreateProcessA(NULL, (char*)full_cmd.c_str(), NULL, NULL, TRUE, 0, NULL, NULL, &siStartInfo, &piProcInfo);
 
     if (!bSuccess)
     {
         ErrorExit(TEXT("CreateProcess"));
         return -1;
     }
+
+    AssignProcessToJobObject(hJob, piProcInfo.hProcess);
 
     auto get_pipe_str = [](HANDLE pipe)
     {
@@ -127,33 +133,112 @@ int Process::Execute(const std::string& cmd, std::string& cout, std::string& cer
         return sstream.str();
     };
 
-    if (ConnectNamedPipe(out_pipe, NULL) == FALSE && (GetLastError() != ERROR_PIPE_CONNECTED))
+    for (Pipe& pipe : pipes)
     {
-        ErrorExit(TEXT("ConnectNamedPipe out"));
-        return -1;
-        //std::cout << "FAILED TO CONNECT COUT" << std::endl;
-    }
-    if (ConnectNamedPipe(err_pipe, NULL) == FALSE && (GetLastError() != ERROR_PIPE_CONNECTED))
-    {
-        ErrorExit(TEXT("ConnectNamedPipe err"));
-        return -1;
-        //std::cout << "FAILED TO CONNECT CERR" << std::endl;
+        if (ConnectNamedPipe(pipe.handle, NULL) == FALSE && (GetLastError() != ERROR_PIPE_CONNECTED))
+        {
+            ErrorExit(TEXT(("ConnectNamedPipe " + pipe.name).c_str()));
+            return -1;
+        }
     }
 
-    cout = get_pipe_str(out_pipe);
-    cerr = get_pipe_str(err_pipe);
-    DisconnectNamedPipe(out_pipe);
-    DisconnectNamedPipe(err_pipe);
+    out = get_pipe_str(pipes[0].handle);
+    warn = get_pipe_str(pipes[1].handle);
+    err = get_pipe_str(pipes[2].handle);
+
+    for (Pipe& pipe : pipes) DisconnectNamedPipe(pipe.handle);
 
     if (WaitForSingleObject(piProcInfo.hProcess, 10000) == WAIT_TIMEOUT)
     {
         TerminateProcess(piProcInfo.hProcess, 1);
     }
+
     CloseHandle(piProcInfo.hProcess);
     CloseHandle(piProcInfo.hThread);
+    CloseHandle(hJob);
 
-    CloseHandle(out_pipe);
-    CloseHandle(err_pipe);
+    for (Pipe& pipe : pipes) CloseHandle(pipe.handle);
 
+    return 0;
+}
+
+HANDLE Process::RunGUIProcess(GUITask task, std::string& pipe_name)
+{
+    HANDLE hJob = CreateJobObject(NULL, NULL);
+    if (hJob == NULL) 
+    {
+        std::cerr << "Failed to create Job Object. Error: " << GetLastError() << std::endl;
+        return INVALID_HANDLE_VALUE;
+    }
+
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = { 0 };
+    jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+    if (!SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli))) {
+        std::cerr << "Failed to set Job Object information. Error: " << GetLastError() << std::endl;
+        CloseHandle(hJob);
+        return INVALID_HANDLE_VALUE;
+    }
+
+    char app_path[1024] = {};
+    DWORD app_path_size = GetModuleFileNameA(nullptr, app_path, 1024);
+
+    std::string cmd = std::string(app_path) + " " + pipe_name + " " + EnumToString(task);
+
+    PROCESS_INFORMATION piProcInfo;
+    STARTUPINFOA siStartInfo;
+    BOOL bSuccess = FALSE;
+
+    ZeroMemory(&piProcInfo, sizeof(PROCESS_INFORMATION));
+    ZeroMemory(&siStartInfo, sizeof(STARTUPINFO));
+    siStartInfo.cb = sizeof(STARTUPINFO);
+
+    bool success = CreateProcessA(NULL, (char*)cmd.c_str(), NULL, NULL, TRUE, 0, NULL, NULL, &siStartInfo, &piProcInfo);
+
+    if (!success)
+    {
+        __debugbreak();
+        ErrorExit(TEXT("CreateProcess"));
+        return INVALID_HANDLE_VALUE;
+    }
+
+    if (!AssignProcessToJobObject(hJob, piProcInfo.hProcess))
+    {
+        if (!TerminateProcess(piProcInfo.hProcess, 0))
+        {
+            gbl_err << "Failed to terminate the process. Error: " << GetLastError() << std::endl;     
+        }
+        __debugbreak();
+        return INVALID_HANDLE_VALUE;
+    }
+
+    CloseHandle(piProcInfo.hThread);
+
+    return piProcInfo.hProcess;
+}
+
+bool Process::TerminateGUIProcess(HANDLE& handle, DWORD timeout)
+{
+    if (handle == INVALID_HANDLE_VALUE)
+    {
+        return true;
+    }
+    if (timeout > 0)
+    {
+        WaitForSingleObject(handle, timeout);
+    }
+    DWORD exit_code = 0;
+    if (GetExitCodeProcess(handle, &exit_code) && exit_code != STILL_ACTIVE)
+    {
+        return true;
+    }
+
+    if (!TerminateProcess(handle, 0))
+    {
+        gbl_err << "Failed to terminate the process. Error: " << GetLastError() << std::endl;
+        return false;
+    }
+    CloseHandle(handle);
+    handle = INVALID_HANDLE_VALUE;
     return true;
 }

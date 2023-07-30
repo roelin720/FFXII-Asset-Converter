@@ -1,4 +1,5 @@
 #include "Audio.h"
+#include "ConverterInterface.h"
 #include <iostream>
 #include <mmdeviceapi.h>
 #include <endpointvolume.h>
@@ -8,7 +9,7 @@
 #include <cstdio>
 #include <tlhelp32.h>
 
-#define CHECK(x) {HRESULT hr = x; if(hr != S_OK) { _com_error err(hr); std::cerr << "SET MUTE AUDIO FAILURE - " #x << " FAILED - " << err.ErrorMessage() << std::endl; return 0; }}
+#define CHECK(x) {HRESULT hr = x; if(hr != S_OK) { _com_error err(hr); gbl_err << "SET MUTE AUDIO FAILURE - " #x << " FAILED - " << err.ErrorMessage() << std::endl; return 0; }}
 #define SOFT_CHECK(x) {HRESULT hr = x; if(hr != S_OK) { continue; }}
 
 _COM_SMARTPTR_TYPEDEF(IMMDevice, __uuidof(IMMDevice));

@@ -105,9 +105,9 @@ bool areVerticesEqual(
     unsigned numColorChannels) {
     // A little helper to find locally close vertices faster.
     // Try to reuse the lookup table from the last step.
-    const static float epsilon = 1e-5f;
+    constexpr static float epsilon = 1e-5f;
     // Squared because we check against squared length of the vector difference
-    static const float squareEpsilon = epsilon * epsilon;
+    static constexpr float squareEpsilon = epsilon * epsilon;
 
     // Square compare is useful for animeshes vertices compare
     if ((lhs.position - rhs.position).SquareLength() > squareEpsilon) {
@@ -249,8 +249,8 @@ static constexpr size_t JOINED_VERTICES_MARK = 0x80000000u;
 
 // now start the JoinVerticesProcess
 int JoinVerticesProcess::ProcessMesh( aiMesh* pMesh, unsigned int meshIndex) {
-    static_assert( AI_MAX_NUMBER_OF_COLOR_SETS    == 8, "AI_MAX_NUMBER_OF_COLOR_SETS    == 8");
-	static_assert( AI_MAX_NUMBER_OF_TEXTURECOORDS == 8, "AI_MAX_NUMBER_OF_TEXTURECOORDS == 8");
+    static_assert( AI_MAX_NUMBER_OF_COLOR_SETS    == 16, "AI_MAX_NUMBER_OF_COLOR_SETS    == 16");
+	static_assert( AI_MAX_NUMBER_OF_TEXTURECOORDS == 16, "AI_MAX_NUMBER_OF_TEXTURECOORDS == 16");
 
     // Return early if we don't have any positions
     if (!pMesh->HasPositions() || !pMesh->HasFaces()) {

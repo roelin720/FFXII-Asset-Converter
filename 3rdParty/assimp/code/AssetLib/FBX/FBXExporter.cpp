@@ -477,7 +477,7 @@ void FBXExporter::WriteGlobalSettings ()
     WritePropInt(mScene, p, "CoordAxisSign", 1);
     WritePropInt(mScene, p, "OriginalUpAxis", 1);
     WritePropInt(mScene, p, "OriginalUpAxisSign", 1);
-    WritePropDouble(mScene, p, "UnitScaleFactor", 100.0);
+    WritePropDouble(mScene, p, "UnitScaleFactor", 1.0);
     WritePropDouble(mScene, p, "OriginalUnitScaleFactor", 1.0);
     WritePropColor(mScene, p, "AmbientColor", aiVector3D((ai_real)0.0, (ai_real)0.0, (ai_real)0.0));
     WritePropString(mScene, p,"DefaultCamera", "Producer Perspective");

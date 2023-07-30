@@ -1,10 +1,11 @@
 #pragma once
-#include <windows.h> 
+#include <Windows.h>
+#include "Enums.h"
 #include <string>
 
-struct Process
+namespace Process
 {
-	int Execute(const std::string& cmd, std::string& cout, std::string& cerr, const std::string& id);
-
-
-};
+	int RunConvertProcess(const std::string& cmd, std::string& out, std::string& warn, std::string& err, const std::string& id);
+	HANDLE RunGUIProcess(GUITask task, std::string& pipe_name);
+	bool TerminateGUIProcess(HANDLE& handle, DWORD timeout = 0);
+}

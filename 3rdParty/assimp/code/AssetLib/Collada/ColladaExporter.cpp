@@ -231,15 +231,8 @@ void ColladaExporter::WriteHeader() {
     }
 
     std::string up_axis = "Y_UP";
-    if (rotation.Equal(x_rot, epsilon)) {
-        up_axis = "X_UP";
-    } else if (rotation.Equal(y_rot, epsilon)) {
-        up_axis = "Y_UP";
-    } else if (rotation.Equal(z_rot, epsilon)) {
-        up_axis = "Z_UP";
-    } else {
-        mAdd_root_node = true;
-    }
+    mAdd_root_node = true;
+
 
     if (!position.Equal(aiVector3D(0, 0, 0))) {
         mAdd_root_node = true;

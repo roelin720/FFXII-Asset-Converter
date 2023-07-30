@@ -100,14 +100,14 @@ extern "C" {
  *  Supported number of vertex color sets per mesh. */
 
 #ifndef AI_MAX_NUMBER_OF_COLOR_SETS
-#define AI_MAX_NUMBER_OF_COLOR_SETS 0x8
+#define AI_MAX_NUMBER_OF_COLOR_SETS 0x10
 #endif // !! AI_MAX_NUMBER_OF_COLOR_SETS
 
 /** @def AI_MAX_NUMBER_OF_TEXTURECOORDS
  *  Supported number of texture coord sets (UV(W) channels) per mesh */
 
 #ifndef AI_MAX_NUMBER_OF_TEXTURECOORDS
-#define AI_MAX_NUMBER_OF_TEXTURECOORDS 0x8
+#define AI_MAX_NUMBER_OF_TEXTURECOORDS 0x10
 #endif // !! AI_MAX_NUMBER_OF_TEXTURECOORDS
 
 // ---------------------------------------------------------------------------
@@ -850,7 +850,7 @@ struct aiMesh {
     }
 
     //! @brief The class destructor.
-    ~aiMesh() {
+    virtual ~aiMesh() {
         delete[] mVertices;
         delete[] mNormals;
         delete[] mTangents;

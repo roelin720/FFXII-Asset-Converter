@@ -1,10 +1,11 @@
-﻿project (PhyreConverterCMD)
+﻿project (ConverterCMD)
 
 set(CMD_SOURCES ${CONVERTER_SOURCES}
 	"${CMAKE_CURRENT_LIST_DIR}/Main.cpp"
 )
 
 add_executable(${PROJECT_NAME} ${CMD_SOURCES})
+add_dependencies(${PROJECT_NAME} GenerateEnums)
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE "CONVERTER_VERSION=\"${CONVERTER_VERSION}\"")
 
@@ -14,8 +15,8 @@ target_include_directories(${PROJECT_NAME} PUBLIC "${ADDITIONAL_INCLUDE_DIRECTOR
 target_link_libraries(${PROJECT_NAME} PUBLIC assimp DirectXTex)
 
 if(POPULATE_BIN)
-	set(TMP_DIR "${ROOT_PATH}/bin/tmp")
 	set(CMD_BIN_NAME "FFXIIConvert")
+	set(TMP_DIR "${ROOT_PATH}/bin/${CMD_BIN_NAME}v${CONVERTER_VERSION}")
 	set(CMD_EXE_PATH "${ROOT_PATH}/bin/${CMD_BIN_NAME}.exe")
 	set(CMD_ZIP_PATH "${ROOT_PATH}/bin/${CMD_BIN_NAME}v${CONVERTER_VERSION}.zip")
 	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E make_directory "${TMP_DIR}")

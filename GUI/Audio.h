@@ -1,9 +1,9 @@
 #pragma once
-#include <windows.h>
+#include <Windows.h>
 #include <string>
 
-struct Audio
+namespace Audio
 {
-    static bool SetMute(DWORD process_ID, bool mute);
-    static bool SetMute(const std::string& process_name, bool mute);
+    bool SetMute(DWORD process_ID, bool mute);
+    bool SetMute(const std::string& process_name, bool mute);
 };

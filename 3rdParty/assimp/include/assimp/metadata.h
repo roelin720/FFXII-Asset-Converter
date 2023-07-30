@@ -255,7 +255,7 @@ struct aiMetadata {
     /**
      *  @brief The destructor.
      */
-    ~aiMetadata() {
+    virtual ~aiMetadata() {
         delete[] mKeys;
         mKeys = nullptr;
         if (mValues) {

@@ -1,13 +1,14 @@
 #include "VBFArchive.h"
-#include "PhyreIOUtils.h"
+#include "ConverterInterface.h"
+#include "FileIOUtils.h"
 #include "assimp/../../contrib/zlib/zlib.h"
 #include "assimp/../../contrib/zlib/deflate.h"
 #include <filesystem>
 #include <execution>
 #include <algorithm>
 
-using namespace PhyreIO;
-namespace PhyreIO
+using namespace IO;
+namespace IO
 {
 	static MD5 md5hasher;
 
@@ -41,7 +42,7 @@ namespace
 	VBFArchive::Block realloc(std::vector<VBFArchive::Block>& unused_blocks, VBFArchive::Block block, uint64_t new_size)
 	{
 		VBFArchive::Block new_block{ .offset = block.offset, .size = new_size };
-		VBFArchive::Block freed_block;
+		VBFArchive::Block freed_block{};
 
 		if (new_size > block.size)
 		{
@@ -154,12 +155,12 @@ namespace
 		for (uint64_t chunk_offset = 0; chunk_offset < mapping.size;)
 		{
 			uint64_t chunk_size = std::min(mapping.size - chunk_offset, chunk_size_max);
-
+		
 			seekg(istream, mapping.src_offset + chunk_offset, std::ios::beg);
 			read(istream, chunk_buffer.data(), chunk_size);
 			seekp(ostream, mapping.dst_offset + chunk_offset, std::ios::beg);
 			write(ostream, chunk_buffer.data(), chunk_size);
-
+		
 			chunk_offset += chunk_size;
 		}
 	}
@@ -171,11 +172,11 @@ namespace
 		for (uint64_t chunk_offset = 0; chunk_offset < block.size;)
 		{
 			uint64_t chunk_size = std::min(block.size - chunk_offset, chunk_size_max);
-		
+
 			seekg(istream, block.offset + chunk_offset, std::ios::beg);
 			read(istream, chunk_buffer.data(), chunk_size);
 			md5hasher.add(chunk_buffer.data(), chunk_size);
-		
+
 			chunk_offset += chunk_size;
 		}
 		return VBFArchive::md5hash(md5hasher);
@@ -199,12 +200,14 @@ namespace
 	}
 }
 
-VBFArchive::md5hash::md5hash(MD5& md5hasher)
+VBFArchive::md5hash::md5hash() : data{ 0, 0 } {}
+
+VBFArchive::md5hash::md5hash(MD5& md5hasher) : data{0, 0}
 {
 	md5hasher.getHash((unsigned char*)this);
 }
 
-VBFArchive::md5hash::md5hash(MD5& md5hasher, const std::string& input)
+VBFArchive::md5hash::md5hash(MD5& md5hasher, const std::string& input) : data{ 0, 0 }
 {
 	md5hasher(input);
 	md5hasher.getHash((unsigned char*)this);
@@ -222,13 +225,13 @@ bool VBFArchive::load(const std::string& arc_path)
 		std::ifstream stream(arc_path, std::ios::binary);
 		if (file_size == 0 || !stream.good())
 		{
-			std::cerr << "VBF: Failed to open file " + arc_path << std::endl;
+			gbl_err << "VBF: Failed to open file " + arc_path << std::endl;
 			return false;
 		}
 		constexpr char magic_bytes[] = "SRYK";
 		if (read<int32_t>(stream) != *((int32_t*)magic_bytes))
 		{
-			std::cerr << "VBF: magic bytes are incorrect" << std::endl;
+			gbl_err << "VBF: magic bytes are incorrect" << std::endl;
 			return false;
 		}
 		int64_t header_len = read<int32_t>(stream);
@@ -268,7 +271,7 @@ bool VBFArchive::load(const std::string& arc_path)
 
 			seek(stream, 16 + files.size() * 48 + 4 + name_offset, std::ios::beg);
 			files[i].name = read<std::string>(stream);
-			
+
 			files[i].blocks.resize((files[i].uncomp_size / uint16_range) + !!(files[i].uncomp_size % uint16_range));
 			seek(stream, 16 + files.size() * 48 + name_block_size + files[i].block_list_offset, std::ios::beg);
 
@@ -298,18 +301,18 @@ bool VBFArchive::load(const std::string& arc_path)
 
 		if (reorder_files)
 		{
-			std::sort(std::execution::par_unseq, files.begin(), files.end(), [](const File& a, const File& b) 
-			{
-				return a.block_list_offset < b.block_list_offset;
-			});
+			std::sort(std::execution::par_unseq, files.begin(), files.end(), [](const File& a, const File& b)
+				{
+					return a.block_list_offset < b.block_list_offset;
+				});
 		}
 
 		get_unused(used_blocks, unused_data, header_len, file_size - 16);
 		get_unused(used_block_indices, unused_block_lists, 0, files.back().block_list_offset + files.back().blocks.size() * 2);
 
 		assert(!used_blocks.empty());
-		unused_data.push_back(Block{ 
-			.offset = used_blocks.back().offset + used_blocks.back().size, 
+		unused_data.push_back(Block{
+			.offset = used_blocks.back().offset + used_blocks.back().size,
 			.size = UINT64_MAX >> 2 //represents infinity
 		});
 
@@ -323,7 +326,7 @@ bool VBFArchive::load(const std::string& arc_path)
 	catch (const std::exception& e)
 	{
 		const auto ec = std::error_code{ errno, std::system_category() };
-		std::cerr << std::string("VBF: ") + e.what() + " " + ec.message() << std::endl;
+		gbl_err << std::string("VBF: ") + e.what() + " " + ec.message() << std::endl;
 		return false;
 	}
 
@@ -332,16 +335,16 @@ bool VBFArchive::load(const std::string& arc_path)
 
 bool VBFArchive::update_header()
 {
-	std::clog << "Updating vbf header for " << arc_path << std::endl;
+	gbl_log << "Updating vbf header for " << arc_path << std::endl;
 
 	if (arc_path.empty() || files.empty())
 	{
-		std::cerr << "VBF: No vbf has been loaded" << std::endl;
+		gbl_err << "VBF: No vbf has been loaded" << std::endl;
 		return false;
 	}
 	if (!unmodified())
 	{
-		std::cerr << "VBF: vbf has been externally modified. Please reload" << std::endl;
+		gbl_err << "VBF: vbf has been externally modified. Please reload" << std::endl;
 		return false;
 	}
 
@@ -352,7 +355,7 @@ bool VBFArchive::update_header()
 		std::fstream stream(arc_path, std::ios::binary | std::ios::in | std::ios::out);
 		if (!stream.good())
 		{
-			std::cerr << "VBF: Failed to open vbf - " + arc_path << std::endl;
+			gbl_err << "VBF: Failed to open vbf - " + arc_path << std::endl;
 			return false;
 		}
 		assert(name_block_size > 0);
@@ -399,27 +402,26 @@ bool VBFArchive::update_header()
 	catch (const std::exception& e)
 	{
 		const auto ec = std::error_code{ errno, std::system_category() };
-		std::cerr << std::string("VBF: ") + e.what() + " " + ec.message() + "VBF IS LIKELY CORRUPT. PLEASE RESTORE FROM BACKUP" << std::endl;
+		gbl_err << std::string("VBF: ") + e.what() + " " + ec.message() + "VBF IS LIKELY CORRUPT. PLEASE RESTORE FROM BACKUP" << std::endl;
 		return false;
 	}
-
 	signal_modified();
 
 	return true;
 }
 
-bool VBFArchive::extract(const std::string& src_name, const std::string& out_path) const
+bool VBFArchive::extract(const std::string& src_name, const std::filesystem::path& out_path) const
 {
-	std::clog << "Extracting " << src_name << " " << out_path << std::endl;
+	gbl_log << "Extracting " << src_name << " " << out_path << std::endl;
 
 	if (arc_path.empty() || files.empty())
 	{
-		std::cerr << "VBF: No vbf has been loaded" << std::endl;
+		gbl_err << "VBF: No vbf has been loaded" << std::endl;
 		return false;
 	}
 	if (!unmodified())
 	{
-		std::cerr << "VBF: vbf has been externally modified. Please reload" << std::endl;
+		gbl_err << "VBF: vbf has been externally modified. Please reload" << std::endl;
 		return false;
 	}
 
@@ -428,7 +430,7 @@ bool VBFArchive::extract(const std::string& src_name, const std::string& out_pat
 		const File* found_file = find_file(src_name);
 		if (found_file == nullptr)
 		{
-			std::cerr << "VBF: Failed to find file in vbf - " + src_name << std::endl;
+			gbl_err << "VBF: Failed to find file in vbf - " << src_name << std::endl;
 			return false;
 		}
 		const File& file = *found_file;
@@ -436,13 +438,13 @@ bool VBFArchive::extract(const std::string& src_name, const std::string& out_pat
 		std::ifstream istream(arc_path, std::ios::binary);
 		if (!istream.good())
 		{
-			std::cerr << "VBF: Failed to open vbf file - " + arc_path << std::endl;
+			gbl_err << "VBF: Failed to open vbf file - " << arc_path << std::endl;
 			return false;
 		}
 		std::ofstream ostream(out_path, std::ios::binary);
 		if (!ostream.good())
 		{
-			std::cerr << "VBF: Failed to open output file - " + out_path << std::endl;
+			gbl_err << "VBF: Failed to open output file - " << out_path << std::endl;
 			return false;
 		}
 
@@ -458,7 +460,7 @@ bool VBFArchive::extract(const std::string& src_name, const std::string& out_pat
 		for (int32_t i = 0; i < file.blocks.size(); ++i)
 		{
 			raw_block_data.resize(file.blocks[i].size);
-		
+
 			read(istream, raw_block_data.data(), raw_block_data.size());
 
 			if (raw_block_data.size() == uint16_range || (i == file.blocks.size() - 1 && raw_block_data.size() == file.uncomp_size % uint16_range))
@@ -469,22 +471,22 @@ bool VBFArchive::extract(const std::string& src_name, const std::string& out_pat
 
 			decomp_size = (uLongf)decomp_block_data.size();
 			int result = uncompress((Bytef*)decomp_block_data.data(), &decomp_size, (Bytef*)raw_block_data.data(), (uLongf)raw_block_data.size());
-			
+
 			switch (result)
 			{
 			case Z_MEM_ERROR:
-				std::cerr << "Failed to decompress block " + std::to_string(i) + " of file (out of memory) " + file.name << std::endl;
+				gbl_err << "Failed to decompress block " + std::to_string(i) + " of file (out of memory) " + file.name << std::endl;
 				return false;
 			case Z_BUF_ERROR:
-				std::cerr << "Failed to decompress block " + std::to_string(i) + " of file (comp_buffer is too small) " + file.name << std::endl;
+				gbl_err << "Failed to decompress block " + std::to_string(i) + " of file (comp_buffer is too small) " + file.name << std::endl;
 				return false;
 			case Z_DATA_ERROR:
-				std::cerr << "Failed to decompress block " + std::to_string(i) + " of file (data is corrupt) " + file.name << std::endl;
+				gbl_err << "Failed to decompress block " + std::to_string(i) + " of file (data is corrupt) " + file.name << std::endl;
 				return false;
 			}
 			if (result != Z_OK)
 			{
-				std::cerr << "Failed to decompress block " + std::to_string(i) + " of file (unknown error) " + file.name << std::endl;
+				gbl_err << "Failed to decompress block " + std::to_string(i) + " of file (unknown error) " + file.name << std::endl;
 				return false;
 			}
 			write(ostream, decomp_block_data.data(), decomp_size);
@@ -494,28 +496,28 @@ bool VBFArchive::extract(const std::string& src_name, const std::string& out_pat
 	catch (const std::exception& e)
 	{
 		const auto ec = std::error_code{ errno, std::system_category() };
-		std::cerr << std::string("VBF: ") + e.what() + " " + ec.message() << std::endl;
+		gbl_err << std::string("VBF: ") + e.what() + " " + ec.message() << std::endl;
 		return false;
 	}
 	return true;
 }
 
-bool VBFArchive::inject(const std::string& dst_name, const std::string& src_path)
+bool VBFArchive::inject(const std::string& dst_name, const std::filesystem::path& src_path)
 {
-	std::clog << "Injecting into " << dst_name << " from " << src_path << std::endl;
+	gbl_log << "Injecting into " << dst_name << " from " << src_path << std::endl;
 
 	if (arc_path.empty() || files.empty())
 	{
-		std::cerr << "VBF: No vbf has been loaded" << std::endl;
+		gbl_err << "VBF: No vbf has been loaded" << std::endl;
 		return false;
 	}
 	if (!unmodified())
 	{
-		std::cerr << "VBF: vbf has been externally modified. Please reload" << std::endl;
+		gbl_err << "VBF: vbf has been externally modified. Please reload" << std::endl;
 		return false;
 	}
 
-	std::string	stage_path = PhyreIO::TmpPath() + "/vbf_stage.tmp";
+	std::string	stage_path = IO::TmpPath() + "/vbf_stage.tmp";
 	std::vector<Mapping> stage_map;
 	stage_map.reserve(256);
 
@@ -524,16 +526,16 @@ bool VBFArchive::inject(const std::string& dst_name, const std::string& src_path
 		std::ofstream stage(stage_path, std::ios::binary);
 		if (!stage.good())
 		{
-			PhyreIO::CancelWrite(stage_path);
-			std::cerr << "VBF: Failed to open vbf stage file - " + stage_path << std::endl;
+			IO::CancelWrite(stage_path);
+			gbl_err << "VBF: Failed to open vbf stage file - " + stage_path << std::endl;
 			return false;
 		}
 
 		File* found_file = find_file(dst_name);
 		if (found_file == nullptr)
 		{
-			PhyreIO::CancelWrite(stage_path, &stage);
-			std::cerr << "VBF: Failed to find file in vbf - " + dst_name << std::endl;
+			IO::CancelWrite(stage_path, &stage);
+			gbl_err << "VBF: Failed to find file in vbf - " + dst_name << std::endl;
 			return false;
 		}
 		File& dst_file = *found_file;
@@ -541,16 +543,16 @@ bool VBFArchive::inject(const std::string& dst_name, const std::string& src_path
 		uint64_t src_size = (uint64_t)std::filesystem::file_size(src_path);
 		if (src_size == 0)
 		{
-			PhyreIO::CancelWrite(stage_path, &stage);
-			std::cerr << "VBF: Failed to get file size/file is empty - " + src_path << std::endl;
+			IO::CancelWrite(stage_path, &stage);
+			gbl_err << "VBF: Failed to get file size/file is empty - " << src_path << std::endl;
 			return false;
 		}
 
 		std::ifstream src_stream(src_path, std::ios::binary);
 		if (!src_stream.good())
 		{
-			PhyreIO::CancelWrite(stage_path, &stage);
-			std::cerr << "VBF: Failed to open file - " + src_path << std::endl;
+			IO::CancelWrite(stage_path, &stage);
+			gbl_err << "VBF: Failed to open file - " << src_path << std::endl;
 			return false;
 		}
 
@@ -565,11 +567,11 @@ bool VBFArchive::inject(const std::string& dst_name, const std::string& src_path
 		dst_file.blocks.clear();
 		dst_file.blocks.reserve(src_size / uint16_max);
 
-		std::clog << "Compressing files" << std::endl;
+		gbl_log << "Compressing files" << std::endl;
 
-		for (uint64_t uncomp_offset = 0; uncomp_offset < src_size;) 		
+		for (uint64_t uncomp_offset = 0; uncomp_offset < src_size;)
 		{
-			uint64_t uncomp_size = std::min(uint64_t(src_size) - uncomp_offset, uint64_t(uint16_range));
+			uint64_t uncomp_size = std::min(src_size - uncomp_offset, uint64_t(uint16_range));
 			uLongf comp_size = (uLongf)comp_buffer.size();
 
 			seek(src_stream, uncomp_offset, std::ios::beg);
@@ -597,7 +599,7 @@ bool VBFArchive::inject(const std::string& dst_name, const std::string& src_path
 
 		if (total_comp_size == 0)
 		{
-			std::clog << "Storing data uncompressed" << std::endl;
+			gbl_log << "Storing data uncompressed" << std::endl;
 
 			dst_file.blocks.reserve((src_size / uint16_range) + 1);
 			for (uint64_t chunk_offset = 0; chunk_offset < src_size;)
@@ -619,8 +621,8 @@ bool VBFArchive::inject(const std::string& dst_name, const std::string& src_path
 		std::ifstream arc_stream(arc_path, std::ios::binary);
 		if (!arc_stream.good())
 		{
-			PhyreIO::CancelWrite(stage_path, &stage);
-			std::cerr << "VBF: Failed to open vbf - " + arc_path << std::endl;
+			IO::CancelWrite(stage_path, &stage);
+			gbl_err << "VBF: Failed to open vbf - " + arc_path << std::endl;
 			return false;
 		}
 
@@ -665,7 +667,7 @@ bool VBFArchive::inject(const std::string& dst_name, const std::string& src_path
 							front_file = &file;
 						}
 					}
-					std::clog << "Shifting file data to end for block-list space " << front_file->name << std::endl;
+					gbl_log << "Shifting file data to end for block-list space " << front_file->name << std::endl;
 
 					Block new_data_block = alloc(unused_data, front_file->data_size);
 					assert(new_data_block.offset > front_file->data_offset && new_data_block.size == front_file->data_size);
@@ -683,7 +685,7 @@ bool VBFArchive::inject(const std::string& dst_name, const std::string& src_path
 					stage_map.push_back(Mapping{
 						.src_offset = (uint64_t)stage.tellp(),
 						.dst_offset = new_data_block.offset,
-						.size = front_file->data_size						
+						.size = front_file->data_size
 					});
 
 					transfer_data_chunked(arc_stream, stage, Mapping{
@@ -704,7 +706,7 @@ bool VBFArchive::inject(const std::string& dst_name, const std::string& src_path
 					unused_block_lists.push_back(block_list);
 					std::sort(std::execution::par_unseq, unused_block_lists.begin(), unused_block_lists.end());
 				}
-			}	
+			}
 		}
 
 		if (src_storage_size != dst_file.data_size)
@@ -730,7 +732,7 @@ bool VBFArchive::inject(const std::string& dst_name, const std::string& src_path
 
 		if (reorder_files)
 		{
-			std::sort(std::execution::par_unseq, files.begin(), files.end(), [](const File& a, const File& b) 
+			std::sort(std::execution::par_unseq, files.begin(), files.end(), [](const File& a, const File& b)
 			{
 				return a.block_list_offset < b.block_list_offset;
 			});
@@ -741,26 +743,26 @@ bool VBFArchive::inject(const std::string& dst_name, const std::string& src_path
 	catch (const std::exception& e)
 	{
 		const auto ec = std::error_code{ errno, std::system_category() };
-		std::cerr << std::string("VBF: ") + e.what() + " " + ec.message() << std::endl;
+		gbl_err << std::string("VBF: ") + e.what() + " " + ec.message() << std::endl;
 		return false;
 	}
 
 	try
 	{
-		std::clog << "Comitting vbf changes" << std::endl;
+		gbl_log << "Comitting vbf changes" << std::endl;
 
 		std::ifstream istream(stage_path, std::ios::binary);
 		if (!istream.good())
 		{
 			std::remove(stage_path.c_str());
-			std::cerr << std::string("VBF: Failed to open vbf stage file - ") + stage_path << std::endl;
+			gbl_err << std::string("VBF: Failed to open vbf stage file - ") + stage_path << std::endl;
 			return false;
 		}
 		std::fstream ostream(arc_path, std::ios::binary | std::ios::in | std::ios::out);
 		if (!ostream.good())
 		{
 			std::remove(stage_path.c_str());
-			std::cerr << std::string("VBF: Failed to open vbf - ") + arc_path << std::endl;
+			gbl_err << std::string("VBF: Failed to open vbf - ") + arc_path << std::endl;
 			return false;
 		}
 
@@ -779,7 +781,7 @@ bool VBFArchive::inject(const std::string& dst_name, const std::string& src_path
 	catch (const std::exception& e)
 	{
 		const auto ec = std::error_code{ errno, std::system_category() };
-		std::cerr << std::string("VBF: ") + e.what() + " " + ec.message() + "VBF IS LIKELY CORRUPT. PLEASE RESTORE FROM BACKUP" << std::endl;
+		gbl_err << std::string("VBF: ") + e.what() + " " + ec.message() + "VBF IS LIKELY CORRUPT. PLEASE RESTORE FROM BACKUP" << std::endl;
 		return false;
 	}
 
@@ -796,7 +798,7 @@ bool VBFArchive::load_name_tree()
 	{
 		if (files.empty())
 		{
-			std::cerr << "VBF: No vbf has been loaded" << std::endl;
+			gbl_err << "VBF: No vbf has been loaded" << std::endl;
 			return false;
 		}
 
@@ -855,7 +857,7 @@ bool VBFArchive::load_name_tree()
 		{
 			TrieNode* trie_node = &trie;
 
-			for (const std::string& name_seg : PhyreIO::Segment(files[i].name))
+			for (const std::string& name_seg : IO::Segment(files[i].name))
 			{
 				auto it = std::find_if(trie_node->children.begin(), trie_node->children.end(), [name_seg](const TrieNode* child) { return child->name == name_seg; });
 				if (it == trie_node->children.end())
@@ -871,7 +873,7 @@ bool VBFArchive::load_name_tree()
 		name_tree.reserve(trie_size);
 		trie.store(name_tree, nullptr);
 
-		if (CreateDirectoryA("cache", NULL) || ERROR_ALREADY_EXISTS == GetLastError())
+		if (std::filesystem::is_directory("cache") || std::filesystem::create_directory("cache"))
 		{
 			std::ofstream stream(cache_path, std::ios::binary);
 			write<uint64_t>(stream, name_tree.size());
@@ -892,7 +894,7 @@ bool VBFArchive::load_name_tree()
 	catch (const std::exception& e)
 	{
 		const auto ec = std::error_code{ errno, std::system_category() };
-		std::cerr << std::string("VBF LOAD FALURE: ") + e.what() + " " + ec.message() << std::endl;
+		gbl_err << std::string("VBF LOAD FALURE: ") + e.what() + " " + ec.message() << std::endl;
 		std::remove(cache_path.c_str());
 		return false;
 	}
@@ -901,7 +903,7 @@ bool VBFArchive::load_name_tree()
 
 const VBFArchive::File* VBFArchive::find_file(const std::string& file_name) const
 {
-	md5hash name_hash = md5hash(md5hasher, PhyreIO::Normalise(file_name));
+	md5hash name_hash = md5hash(md5hasher, IO::Normalise(file_name));
 
 	for (const File& file : files)
 	{
@@ -924,8 +926,8 @@ const VBFArchive::TreeNode* VBFArchive::find_node(const std::string& file_name) 
 	{
 		return nullptr;
 	}
-	const VBFArchive::TreeNode* node = &name_tree[0];                                                                                               name_tree[0];
-	std::vector<std::string> segments = PhyreIO::Segment(file_name);
+	const VBFArchive::TreeNode* node = name_tree.data();                                                                                               name_tree[0];
+	std::vector<std::string> segments = IO::Segment(file_name);
 
 	for (int i = 0; i < segments.size(); ++i)
 	{
@@ -956,7 +958,7 @@ bool VBFArchive::unmodified() const
 {
 	if (arc_path.empty())
 	{
-		std::cerr << "vbf not loaded" << std::endl;
+		gbl_err << "vbf not loaded" << std::endl;
 		return false;
 	}
 	try
@@ -969,7 +971,7 @@ bool VBFArchive::unmodified() const
 	catch (const std::exception& e)
 	{
 		const auto ec = std::error_code{ errno, std::system_category() };
-		std::cerr << "IO ERROR: " << e.what() << " " << ec.message() << std::endl;
+		gbl_err << "IO ERROR: " << e.what() << " " << ec.message() << std::endl;
 		return false;
 	}
 	return false;
@@ -979,7 +981,7 @@ bool VBFArchive::signal_modified()
 {
 	if (arc_path.empty())
 	{
-		std::cerr << "vbf not loaded" << std::endl;
+		gbl_err << "vbf not loaded" << std::endl;
 		return false;
 	}
 	try
@@ -989,7 +991,7 @@ bool VBFArchive::signal_modified()
 	catch (const std::exception& e)
 	{
 		const auto ec = std::error_code{ errno, std::system_category() };
-		std::cerr << "IO ERROR: " << e.what() << " " << ec.message() << std::endl;
+		gbl_err << "IO ERROR: " << e.what() << " " << ec.message() << std::endl;
 		return false;
 	}
 	return true;
@@ -1003,7 +1005,7 @@ bool VBFUtils::Separate(const std::string& arc_file_path, std::string& arc_path,
 		size_t arc_end = n_arc_file_path.find(".vbf");
 		if (arc_end == std::string::npos)
 		{
-			std::cerr << ".vbf not found in " << n_arc_file_path << std::endl;
+			gbl_err << ".vbf not found in " << n_arc_file_path << std::endl;
 			return false;
 		}
 		arc_path = n_arc_file_path.substr(0, arc_end + 4);
@@ -1016,7 +1018,7 @@ bool VBFUtils::Separate(const std::string& arc_file_path, std::string& arc_path,
 	}
 	catch (const std::exception& e)
 	{
-		std::cerr << "ERROR: " << e.what() << std::endl;
+		gbl_err << "ERROR: " << e.what() << std::endl;
 		return false;
 	}
 	return true;
@@ -1034,9 +1036,9 @@ bool VBFArchive::extract_all(const std::string& folder, const VBFArchive::TreeNo
 	}
 	else
 	{
-		if (!CreateDirectoryA(path.c_str(), NULL) && ERROR_ALREADY_EXISTS != GetLastError())
+		if (!(std::filesystem::is_directory(path) || std::filesystem::create_directory(path)))
 		{
-			std::cerr << "Failed to create directory " << path;
+			gbl_err << "Failed to create directory " << path;
 			return false;
 		}
 		for (TreeNode* child : node.children)

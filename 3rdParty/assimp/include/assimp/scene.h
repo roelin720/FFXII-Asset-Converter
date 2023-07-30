@@ -139,7 +139,7 @@ struct ASSIMP_API aiNode {
     explicit aiNode(const std::string& name);
 
     /** Destructor */
-    ~aiNode();
+    virtual ~aiNode();
 
     /** Searches for a node with a specific name, beginning at this
      *  nodes. Normally you will call this method on the root node

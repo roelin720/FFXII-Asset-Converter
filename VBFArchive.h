@@ -15,7 +15,7 @@ public:
     {
         uint64_t data[2];
 
-        md5hash() {}
+        md5hash();
         md5hash(MD5& md5hasher);
         md5hash(MD5& md5hasher, const std::string& input);
 
@@ -25,8 +25,8 @@ public:
 
     struct Block
     {
-        uint64_t offset;
-        uint64_t size;
+        uint64_t offset = 0;
+        uint64_t size = 0;
 
         auto operator<=>(const Block&) const = default;
     };
@@ -37,7 +37,7 @@ public:
         uint64_t dst_offset;
         uint64_t size;
 
-        constexpr Block src_block() const { return Block{ .offset = src_offset, .size = size }; }
+        constexpr Block sri_block() const { return Block{ .offset = src_offset, .size = size }; }
         constexpr Block dst_block() const { return Block{ .offset = dst_offset, .size = size }; }
 
         auto operator<=>(const Mapping&) const = default;
@@ -47,17 +47,17 @@ public:
     {
         md5hash name_hash;
         std::string name;
-        uint64_t block_list_offset;
-        uint64_t data_offset;
-        uint64_t uncomp_size;
-        uint64_t data_size;
+        uint64_t block_list_offset = 0;
+        uint64_t data_offset = 0;
+        uint64_t uncomp_size = 0;
+        uint64_t data_size = 0;
         std::vector<Block> blocks;
     };
 
     struct TreeNode
     {
         std::string name_segment;
-        TreeNode* parent;
+        TreeNode* parent = nullptr;
         std::vector<TreeNode*> children;
 
         std::string full_name() const;
@@ -75,8 +75,8 @@ public:
 
     bool load(const std::string& path);
     bool load_name_tree();
-    bool extract(const std::string& file_name, const std::string& out_path) const;
-    bool inject(const std::string& file_name, const std::string& in_path);
+    bool extract(const std::string& file_name, const std::filesystem::path& out_path) const;
+    bool inject(const std::string& file_name, const std::filesystem::path& in_path);
     bool update_header();
 
     bool extract_all(const std::string& folder, const VBFArchive::TreeNode& node) const;
