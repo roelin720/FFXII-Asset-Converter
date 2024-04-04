@@ -4,10 +4,10 @@
 #include <iomanip>
 #include <ctime>
 
-std::list<::Log> Logs::data;
-bool Logs::scroll_log = false;
+std::list<::GUILog> GUILogs::data;
+bool GUILogs::scroll_log = false;
 
-std::string Log::datetime()
+std::string GUILog::datetime()
 {
 	std::stringstream sstream;
 	tm _tm = {};
@@ -17,7 +17,7 @@ std::string Log::datetime()
 	return sstream.str();
 }
 
-Log::Log(LogType type, const std::string& msg) : type(type)
+GUILog::GUILog(GUILogType type, const std::string& msg) : type(type)
 {
 	std::stringstream ss(msg);
 	std::string s;
@@ -32,7 +32,7 @@ Log::Log(LogType type, const std::string& msg) : type(type)
 	assign(s);
 }
 
-void Logs::push(const Log& log)
+void GUILogs::push(const GUILog& log)
 {
 	data.push_back(log);
 	if (data.size() >= log_buffer_max)

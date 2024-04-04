@@ -42,7 +42,7 @@ HRESULT _stdcall ClipDropSource::QueryContinueDrag(BOOL fEscapePressed, DWORD ke
 {
 	if (key_state & (mk_button ^ 3) || fEscapePressed)
 	{
-		gbl_log << "Cancelling drag-drop" << std::endl;
+		LOG(INFO) << "Cancelling drag-drop" << std::endl;
 		return DRAGDROP_S_CANCEL;
 	}
 

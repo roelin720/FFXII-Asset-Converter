@@ -1,7 +1,7 @@
 ﻿cmake_minimum_required (VERSION 3.8)
 
 project (Converter)
-set(CONVERTER_VERSION "2.0.1")
+set(CONVERTER_VERSION "2.1.1")
 
 option(POPULATE_BIN "place binaries in /bin and zip binaries with bundled_files to /bin" ON)
 
@@ -28,7 +28,6 @@ include(GLM)
 LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${THIRD_PARTY_DIR}/assimp/code")
 LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${THIRD_PARTY_DIR}/assimp/include")
 LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${THIRD_PARTY_BINARY_DIR}/assimp/contrib/zlib")
-LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${THIRD_PARTY_DIR}/assimp/code/AssetLib/AssimpImportHook")
 LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${glm_SOURCE_DIR}")
 LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${directxtex_SOURCE_DIR}")
 LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${arg_parser_SOURCE_DIR}")
@@ -78,4 +77,5 @@ set(CONVERTER_SOURCES
 
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/CMD")
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/GUI")
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/Viewer")
 

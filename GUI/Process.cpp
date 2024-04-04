@@ -1,5 +1,6 @@
 #include "Process.h"
 #include "ConverterInterface.h"
+#include "Pipe.h"
 #include <tchar.h>
 #include <stdio.h> 
 #include <strsafe.h>
@@ -7,93 +8,60 @@
 #include <thread>
 #include <iostream>
 
-namespace {
-
-    constexpr size_t buffSize = 4096;
-
-    void ErrorExit(const char* lpszFunction)
+namespace 
+{
+    std::string LastErrorString()
     {
         LPVOID lpMsgBuf = nullptr;
-        LPVOID lpDisplayBuf = nullptr;
         DWORD dw = GetLastError();
 
         FormatMessage(
-            FORMAT_MESSAGE_ALLOCATE_BUFFER |
-            FORMAT_MESSAGE_FROM_SYSTEM |
-            FORMAT_MESSAGE_IGNORE_INSERTS,
+            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
             NULL,
             dw,
             MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
             (LPTSTR)&lpMsgBuf,
-            0, NULL);
+            0, 
+            NULL);
 
-        lpDisplayBuf = (LPVOID)LocalAlloc(LMEM_ZEROINIT,
-            (lstrlen((LPCTSTR)lpMsgBuf) + lstrlen((LPCTSTR)lpszFunction) + 40) * sizeof(TCHAR));
-        StringCchPrintf((LPTSTR)lpDisplayBuf,
-            LocalSize(lpDisplayBuf) / sizeof(TCHAR),
-            TEXT("%s failed with error %d: %s"),
-            lpszFunction, dw, lpMsgBuf);
-        MessageBox(NULL, (LPCTSTR)lpDisplayBuf, TEXT("Error"), MB_OK);
-
-        LocalFree(lpMsgBuf);
-        LocalFree(lpDisplayBuf);
-        ExitProcess(1);
+        return (char*)lpMsgBuf;
     }
 }
-#define PIPE_TIMEOUT  1000
-#define BUFSIZE 1024
-//#define ErrorExit(x) {__debugbreak();}
 
-int Process::RunConvertProcess(const std::string& cmd, std::string& out, std::string& warn, std::string& err, const std::string& id)
+int Process::RunConvertProcess(const std::string& cmd, std::list<std::pair<uint32_t, std::string>>& logs, const std::string& id)
 {
     SECURITY_ATTRIBUTES saAttr = {};
 
     HANDLE hJob = CreateJobObject(NULL, NULL);
-    if (hJob == NULL) {
+    if (hJob == NULL) 
+    {
         std::cerr << "Failed to create Job Object. Error: " << GetLastError() << std::endl;
-        return 1;
+        return -1;
     }
 
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = { 0 };
     jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
 
-    if (!SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli))) {
-        std::cerr << "Failed to set Job Object information. Error: " << GetLastError() << std::endl;
+    if (!SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli))) 
+    {
+        logs.push_back({ ERR.ID, "Failed to set Job Object information. Error: " + LastErrorString()});
         CloseHandle(hJob);
-        return 1;
+        return -1;
     }
 
     saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
     saAttr.bInheritHandle = TRUE;
     saAttr.lpSecurityDescriptor = NULL;
 
-    struct Pipe
+    PipeServer pipe;
+    if (!pipe.create("ConvPipe" + id))
     {
-        std::string name;
-        HANDLE handle;
-    };
-    
-    Pipe pipes[3] =
-    {
-        {"\\\\.\\pipe\\out" + id},
-        {"\\\\.\\pipe\\warn" + id},
-        {"\\\\.\\pipe\\err" + id}
-    };
-
-    for (Pipe& pipe : pipes)
-    {
-        pipe.handle = CreateNamedPipeA(pipe.name.c_str(),
-            PIPE_ACCESS_INBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE,
-            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE,
-            1, 1 << 16, 1 << 16, PIPE_TIMEOUT, &saAttr);
-        if (pipe.handle == INVALID_HANDLE_VALUE)
-        {
-            ErrorExit(TEXT(("CreatePipe " + pipe.name).c_str()));
-            return -1;
-        }
+        logs.push_back({ ERR.ID, "Failed to create pipe" });
+        return -1;
     }
 
-    std::string full_cmd = cmd + " " + pipes[0].name + " " + pipes[1].name + " " + pipes[2].name + " " + EnumToString(GUITask::Convert);
+
+    std::string full_cmd = cmd + " " + pipe.name + " " + EnumToString(GUITask::Convert);
 
     PROCESS_INFORMATION piProcInfo;
     STARTUPINFOA siStartInfo;
@@ -103,63 +71,75 @@ int Process::RunConvertProcess(const std::string& cmd, std::string& out, std::st
     ZeroMemory(&siStartInfo, sizeof(STARTUPINFO));
     siStartInfo.cb = sizeof(STARTUPINFO);
 
-    // Create the child process. 
-
-    bSuccess = CreateProcessA(NULL, (char*)full_cmd.c_str(), NULL, NULL, TRUE, 0, NULL, NULL, &siStartInfo, &piProcInfo);
-
-    if (!bSuccess)
+    if (!CreateProcessA(NULL, (char*)full_cmd.c_str(), NULL, NULL, TRUE, 0, NULL, NULL, &siStartInfo, &piProcInfo))
     {
-        ErrorExit(TEXT("CreateProcess"));
+        logs.push_back({ ERR.ID, "Failed to create process: " + LastErrorString() });
         return -1;
     }
 
-    AssignProcessToJobObject(hJob, piProcInfo.hProcess);
-
-    auto get_pipe_str = [](HANDLE pipe)
+    if (!AssignProcessToJobObject(hJob, piProcInfo.hProcess))
     {
-        DWORD dwRead;
-        CHAR chBuf[buffSize] = {};
-        BOOL bSuccess = FALSE;
-        std::stringstream sstream;
-
-        for (;;)
-        {
-            bSuccess = ReadFile(pipe, chBuf, buffSize - 1, &dwRead, NULL);
-            if (!bSuccess) break;
-            chBuf[dwRead] = '\0';
-
-            sstream << std::string(chBuf, chBuf + dwRead);
-        }
-        return sstream.str();
-    };
-
-    for (Pipe& pipe : pipes)
-    {
-        if (ConnectNamedPipe(pipe.handle, NULL) == FALSE && (GetLastError() != ERROR_PIPE_CONNECTED))
-        {
-            ErrorExit(TEXT(("ConnectNamedPipe " + pipe.name).c_str()));
-            return -1;
-        }
+        logs.push_back({ ERR.ID, "Failed to assign process to job object: " + LastErrorString() });
+        return -1;
     }
 
-    out = get_pipe_str(pipes[0].handle);
-    warn = get_pipe_str(pipes[1].handle);
-    err = get_pipe_str(pipes[2].handle);
+    if (!pipe.connect())
+    {
+        logs.push_back({ ERR.ID, "Failed to connect pipe: " + LastErrorString() });
+        return -1;
+    }
 
-    for (Pipe& pipe : pipes) DisconnectNamedPipe(pipe.handle);
+    std::string log_buffer;
+    log_buffer.reserve(1ull << 12);
+
+    while (true)
+    {   
+        if (pipe.peek() > 0)
+        {
+            int32_t log_ID = 0;
+            int32_t size = 0;
+            if (!pipe.read(log_ID))
+            {
+                break;
+            }
+
+            if (log_ID < 0) //indicates end
+            {
+                pipe.write<uint32_t>(1); //acknowledgment
+                break;
+            }
+
+            if (!pipe.read(size))
+            {
+                break;
+            }
+            log_buffer.resize(size);
+
+            if (!pipe.read(log_buffer.data(), size))
+            {
+                break;
+            }
+            
+            logs.push_back({ log_ID, log_buffer });
+        }
+    }
 
     if (WaitForSingleObject(piProcInfo.hProcess, 10000) == WAIT_TIMEOUT)
     {
         TerminateProcess(piProcInfo.hProcess, 1);
     }
 
+    DWORD exit_code;
+    GetExitCodeProcess(piProcInfo.hProcess, &exit_code);
+
+    pipe.disconnect();
+    pipe.close();
+
     CloseHandle(piProcInfo.hProcess);
     CloseHandle(piProcInfo.hThread);
     CloseHandle(hJob);
 
-    for (Pipe& pipe : pipes) CloseHandle(pipe.handle);
-
-    return 0;
+    return exit_code;
 }
 
 HANDLE Process::RunGUIProcess(GUITask task, std::string& pipe_name)
@@ -167,15 +147,16 @@ HANDLE Process::RunGUIProcess(GUITask task, std::string& pipe_name)
     HANDLE hJob = CreateJobObject(NULL, NULL);
     if (hJob == NULL) 
     {
-        std::cerr << "Failed to create Job Object. Error: " << GetLastError() << std::endl;
+        LOG(ERR) << "Failed to create Job Object. Error: " << GetLastError() << std::endl;
         return INVALID_HANDLE_VALUE;
     }
 
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = { 0 };
     jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
 
-    if (!SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli))) {
-        std::cerr << "Failed to set Job Object information. Error: " << GetLastError() << std::endl;
+    if (!SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli))) 
+    {
+        LOG(ERR) << "Failed to set Job Object information. Error: " << GetLastError() << std::endl;
         CloseHandle(hJob);
         return INVALID_HANDLE_VALUE;
     }
@@ -197,8 +178,7 @@ HANDLE Process::RunGUIProcess(GUITask task, std::string& pipe_name)
 
     if (!success)
     {
-        __debugbreak();
-        ErrorExit(TEXT("CreateProcess"));
+        LOG(ERR) << "Failed to create process" << std::endl;
         return INVALID_HANDLE_VALUE;
     }
 
@@ -206,9 +186,8 @@ HANDLE Process::RunGUIProcess(GUITask task, std::string& pipe_name)
     {
         if (!TerminateProcess(piProcInfo.hProcess, 0))
         {
-            gbl_err << "Failed to terminate the process. Error: " << GetLastError() << std::endl;     
+            LOG(ERR) << "Failed to terminate the process. Error: " << GetLastError() << std::endl;     
         }
-        __debugbreak();
         return INVALID_HANDLE_VALUE;
     }
 
@@ -235,7 +214,7 @@ bool Process::TerminateGUIProcess(HANDLE& handle, DWORD timeout)
 
     if (!TerminateProcess(handle, 0))
     {
-        gbl_err << "Failed to terminate the process. Error: " << GetLastError() << std::endl;
+        LOG(ERR) << "Failed to terminate the process. Error: " << GetLastError() << std::endl;
         return false;
     }
     CloseHandle(handle);

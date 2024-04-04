@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <glm/ext.hpp>
+#include <glm/gtx/norm.hpp>
 #include <glm/gtc/epsilon.hpp>
 
 using namespace IO;
@@ -19,7 +20,7 @@ namespace
 #endif
 }
 
-#define CHECKBLOCKREQUIRED(b) if (!b) { gbl_err << "Error: Object block '"#b"' not present" << std::endl; return false; }
+#define CHECKBLOCKREQUIRED(b) if (!b) { LOG(ERR) << "Error: Object block '"#b"' not present" << std::endl; return false; }
 #define ASSERTBLOCKREQUIRED(b) if (!b || b->elem_count == 0) { throw std::exception("Error: Object block '"#b"' not present"); }
 #define GETVALIDSINGLE(x) [&](){ auto ptr_arr = x; if(ptr_arr.size() != 1) throw std::exception("Failed to get just one value from '"#x"'"); else return ptr_arr[0]; }()
 
@@ -29,24 +30,26 @@ bool Scene::FileObjectBlocks::initialise(std::istream& stream)
 
     if (!LoadObjectBlocks(stream, *this))
     {
-        gbl_err << "Failed to load object blocks" << std::endl;
+        LOG(ERR) << "Failed to load object blocks" << std::endl;
         return false;
     }
 
-    mesh                    = FindObjectBlock(*this, "PMesh");
-    mesh_instance           = FindObjectBlock(*this, "PMeshInstance");
-    mesh_segment            = FindObjectBlock(*this, "PMeshSegment");
-    string                  = FindObjectBlock(*this, "PString");
-    node                    = FindObjectBlock(*this, "PNode");
-    world_matrix            = FindObjectBlock(*this, "PWorldMatrix");
-    matrix4                 = FindObjectBlock(*this, "PMatrix4");
-    bone_remap              = FindObjectBlock(*this, "PSkinBoneRemap");
-    asset_reference_import  = FindObjectBlock(*this, "PAssetReferenceImport");
-    data_block              = FindObjectBlock(*this, "PDataBlock");
-    vertex_stream           = FindObjectBlock(*this, "PVertexStream");
-    material                = FindObjectBlock(*this, "PMaterial");
-    mesh_instance_bounds    = FindObjectBlock(*this, "PMeshInstanceBounds");
-    mesh_skel_bounds        = FindObjectBlock(*this, "PSkeletonJointBounds");
+    mesh                        = FindObjectBlock(*this, "PMesh");
+    mesh_instance               = FindObjectBlock(*this, "PMeshInstance");
+    mesh_segment                = FindObjectBlock(*this, "PMeshSegment");
+    string                      = FindObjectBlock(*this, "PString");
+    node                        = FindObjectBlock(*this, "PNode");
+    world_matrix                = FindObjectBlock(*this, "PWorldMatrix");
+    matrix4                     = FindObjectBlock(*this, "PMatrix4");
+    bone_remap                  = FindObjectBlock(*this, "PSkinBoneRemap");
+    asset_reference_import      = FindObjectBlock(*this, "PAssetReferenceImport");
+    data_block                  = FindObjectBlock(*this, "PDataBlock");
+    vertex_stream               = FindObjectBlock(*this, "PVertexStream");
+    mesh_segment_context        = FindObjectBlock(*this, "PMeshInstanceSegmentContext");
+    mesh_segment_stream_binding = FindObjectBlock(*this, "PMeshInstanceSegmentStreamBinding");
+    material                    = FindObjectBlock(*this, "PMaterial");
+    mesh_instance_bounds        = FindObjectBlock(*this, "PMeshInstanceBounds");
+    mesh_skel_bounds            = FindObjectBlock(*this, "PSkeletonJointBounds");
 
     seek(stream, stream_pos, std::ios::beg);
 
@@ -60,7 +63,7 @@ bool Scene::unpack(const std::string& orig_path)
         std::ifstream stream(orig_path, std::ios::binary);
         if (!stream)
         {
-            gbl_err << "Could not open " << orig_path << std::endl;
+            LOG(ERR) << "Could not open " << orig_path << std::endl;
             return false;
         }
 
@@ -72,8 +75,10 @@ bool Scene::unpack(const std::string& orig_path)
         seek(stream, 0, std::ios::beg);
         header = read<PhyreHeader>(stream);
 
-        obj_blocks.bone_remap;
-        std::vector<ObjectLink*> skin_bone_remap_links = FindMemberObjectLinks(obj_blocks, *obj_blocks.mesh_segment, "PSkinBoneRemap");
+        if (header.vertices_size == 0)
+        {
+            throw std::runtime_error("No vertices are present");
+        }
 
         unpack_shared_data(stream);
         unpack_nodes(stream);
@@ -83,10 +88,13 @@ bool Scene::unpack(const std::string& orig_path)
         unpack_submeshes(stream);
         unpack_vertex_streams(stream);
         unpack_materials(stream);
+
+        detect_mesh_anims_in_UVs();
+        detect_colours_in_UVs();
     }
     catch (const std::exception& e)
     {
-        gbl_err << "Failed to unpack " << orig_path << " - " << e.what() << std::endl;
+        LOG(ERR) << "Failed to unpack " << orig_path << " - " << e.what() << std::endl;
         return false;
     }
     return true;
@@ -98,21 +106,21 @@ bool Scene::pack(const std::string& mod_path, const std::string& orig_path)
     {
         if (header.magic_bytes == 0)
         {
-            gbl_err << orig_path << " has not been unpacked to be able to pack" << std::endl;
+            LOG(ERR) << orig_path << " has not been unpacked to be able to pack" << std::endl;
             return false;
         }
 
         std::ifstream istream(orig_path, std::ios::binary);
         if (!istream)
         {
-            gbl_err << "Could not open " << orig_path << std::endl;
+            LOG(ERR) << "Could not open " << orig_path << std::endl;
             return false;
         }
 
         std::ofstream ostream(mod_path, std::ios::binary);
         if (!ostream)
         {
-            gbl_err << "Could not open " << mod_path << std::endl;
+            LOG(ERR) << "Could not open " << mod_path << std::endl;
             return false;
         }
 
@@ -270,7 +278,7 @@ bool Scene::pack(const std::string& mod_path, const std::string& orig_path)
     }
     catch (const std::exception& e)
     {
-        gbl_err << "Failed to pack " << mod_path << " - " << e.what() << std::endl;
+        LOG(ERR) << "Failed to pack " << mod_path << " - " << e.what() << std::endl;
         return false;
     }
     return true;
@@ -414,6 +422,35 @@ bool Scene::unpack_models(std::istream& stream)
         }
     }
 
+    //if (obj_blocks.mesh_segment_context)
+    //{
+    //    std::vector<ObjectLink*> seg_context_links = FindMemberObjectLinks(obj_blocks, *obj_blocks.mesh_instance, "PMeshInstanceSegmentContext");
+    //    std::vector<ObjectLink*> stream_binding_links = FindMemberObjectLinks(obj_blocks, *obj_blocks.mesh_segment_context, "PMeshInstanceSegmentStreamBinding");
+    //
+    //    if (seg_context_links.size() > 0)
+    //    {
+    //        for (int64_t i = 0; i < seg_context_links.size(); ++i)
+    //        {
+    //            uint32_t model_ID = seg_context_links[i]->parent_obj_ID;
+    //            uint32_t seg_context_ID = seg_context_links[i]->obj_ID;
+    //
+    //            std::vector<ObjectLink*> local_stream_binding_links = FindParentsObjectLinks(stream_binding_links, seg_context_ID);
+    //
+    //            for (int64_t j = 0; j < local_stream_binding_links.size(); ++j)
+    //            {
+    //                uint32_t binding_ID = local_stream_binding_links[j]->obj_ID;
+    //
+    //                seek(stream, obj_blocks.mesh_segment_stream_binding->data_offset + obj_blocks.mesh_segment_stream_binding->elem_size * binding_ID + 4, std::ios::beg);
+    //                std::cout << models[model_ID].name << "\tI: " << binding_ID << "\tA: " << (int)read<uint8_t>(stream) << "\tB: " << (int)read<uint8_t>(stream) << "\t";
+    //                seek(stream, obj_blocks.mesh_segment_stream_binding->data_offset + obj_blocks.mesh_segment_stream_binding->objects_size + obj_blocks.mesh_segment_stream_binding->array_links[binding_ID].offset, std::ios::beg);
+    //                std::cout << read<std::string>(stream) << std::endl;
+    //            }
+    //        }
+    //
+    //    }
+    //
+    //}
+
     return true;
 }
 
@@ -532,7 +569,6 @@ bool Scene::unpack_meshes(std::istream& stream)
             ObjectLink* local_bone_bounds_link = GETVALIDSINGLE(FindParentsObjectLinks(bone_bounds_links, meshes[i].ID));
             int64_t bbounds_begin = local_bone_bounds_link->obj_ID;
             int64_t bbounds_end = bbounds_begin + local_bone_bounds_link->obj_array_count;
-            CONVASSERT(local_bone_bounds_link->obj_array_count == meshes[i].global_to_local_bone_ID.size());
 
             for (int64_t j = bbounds_begin; j < bbounds_end; ++j)
             {
@@ -616,8 +652,6 @@ bool Scene::unpack_vertex_streams(std::istream& stream)
 
     CONVASSERT(!submeshes.empty());
 
-    //a data block may have multiple vertex streams, but it's unclear why. If there are multiple, the rest are ignored.
-
     vertex_components.resize(obj_blocks.data_block->elem_count);
 
     for (size_t i = 0; i < vertex_components.size(); ++i)
@@ -638,12 +672,31 @@ bool Scene::unpack_vertex_streams(std::istream& stream)
         for (int64_t j = data_block_begin; j < data_block_end; ++j)
         {
             int64_t v_stream_ID = vertex_stream_links[j]->obj_ID;
+            vertex_components[j].vertex_stream_count = vertex_stream_links[j]->obj_array_count;
 
-            //APPLY VSTREAM GROUPING
             obj_blocks.unpack_data_block_element(stream, j, header, vertex_components[j]);
             obj_blocks.unpack_vertex_stream_element(stream, v_stream_ID, shared_data, vertex_components[j]);
 
             submeshes[submesh_ID].components[vertex_components[j].comp_type].push_back(&vertex_components[j]);
+
+            if (vertex_components[j].vertex_stream_count > 1)
+            {
+                //The program generally assumes the elem_count is a multiple of the vertex count
+                //this is being checked for here
+                auto comp_it = submeshes[submesh_ID].components.find(VertexComponentType::Vertex);
+                if (comp_it == submeshes[submesh_ID].components.end() || comp_it->second.empty())
+                {
+                    comp_it = submeshes[submesh_ID].components.find(VertexComponentType::SkinnableVertex);
+                }
+                if (comp_it != submeshes[submesh_ID].components.end() && !comp_it->second.empty())
+                {
+                    int64_t vertex_count = comp_it->second[0]->elem_count;
+                    if (vertex_count > 0)
+                    {
+                        CONVASSERT(vertex_components[j].elem_count / vertex_components[j].vertex_stream_count == vertex_count);
+                    }
+                }
+            }
         }
     }
 
@@ -678,6 +731,12 @@ bool Scene::unpack_materials(std::istream& stream)
         //this usage of links is very unusual
         std::vector<ObjectLink*> local_material_links = FindParentsObjectLinks(material_links, i);
 
+        if (local_material_links.empty())
+        {
+            LOG(WARN) << "Mesh " << meshes[i].name << " has no materials" << std::endl;
+            continue;
+        }
+
         std::sort(local_material_links.begin(), local_material_links.end(), [](const ObjectLink* a, const ObjectLink* b) { return a->obj_array_count < b->obj_array_count; });
 
         for (int64_t j = 0; j < meshes[i].submeshes.size(); ++j)
@@ -703,7 +762,7 @@ bool Scene::unpack_materials(std::istream& stream)
 
             if (texture_ref.empty())
             {
-                gbl_warn << "Material on submesh '" << meshes[i].submeshes[j]->name << "' has no identifiable texures" << std::endl;
+                LOG(WARN) << "Material on submesh '" << meshes[i].submeshes[j]->name << "' has no identifiable texures" << std::endl;
                 continue;
             }
 
@@ -738,7 +797,7 @@ void Scene::join_identical_vertices()
 #ifdef PRINT_JOIN_RESULTS
     std::atomic<size_t> old_vertex_total = 0;
     std::atomic<size_t> new_vertex_total = 0;
-    gbl_log << "Joining identical vertices..." << std::endl;
+    LOG(INFO) << "Joining identical vertices..." << std::endl;
 #define TOTALS , &old_vertex_total, &new_vertex_total
 #else
 #define TOTALS
@@ -776,37 +835,39 @@ void Scene::join_identical_vertices()
                 {
                     for (const VertexComponent* comp : tc.second)
                     {
-                        if (comp->prim_type.ID == PrimID::Float)
+                        for (size_t vs = 0; vs < comp->vertex_stream_count; ++vs)
                         {
-                            constexpr float eps = 1e-5f * 1e-5f;
-                            float* i_data = (float*)&comp->data[i * comp->elem_size];
-                            float* j_data = (float*)&comp->data[j * comp->elem_size];
-
-                            for (uint32_t k = 0; k < comp->prim_type.count; ++k)
+                            if (comp->prim_type.ID == PrimID::Float)
                             {
-                                float diff = i_data[k] - j_data[k];
-                                if (diff * diff > eps)
+                                float* i_data = (float*)&comp->data[(vs * old_vertex_count + i) * comp->elem_size];
+                                float* j_data = (float*)&comp->data[(vs * old_vertex_count + j) * comp->elem_size];
+
+                                for (uint32_t k = 0; k < comp->prim_type.count; ++k)
                                 {
-                                    goto label;
+                                    float delta = i_data[k] - j_data[k];
+                                    if (delta > FLT_EPSILON || delta < -FLT_EPSILON)
+                                    {
+                                        goto label;
+                                    }
                                 }
                             }
-                        }
-                        else if (comp->prim_type.ID == PrimID::UInt8 || comp->prim_type.ID == PrimID::Int8)
-                        {
-                            uint8_t* i_data = (uint8_t*)&comp->data[i * comp->elem_size];
-                            uint8_t* j_data = (uint8_t*)&comp->data[j * comp->elem_size];
-
-                            for (uint32_t k = 0; k < comp->prim_type.count; ++k)
+                            else if (comp->prim_type.ID == PrimID::UInt8 || comp->prim_type.ID == PrimID::Int8)
                             {
-                                if (i_data[k] != j_data[k])
+                                uint8_t* i_data = (uint8_t*)&comp->data[(vs * old_vertex_count + i) * comp->elem_size];
+                                uint8_t* j_data = (uint8_t*)&comp->data[(vs * old_vertex_count + j) * comp->elem_size];
+
+                                for (uint32_t k = 0; k < comp->prim_type.count; ++k)
                                 {
-                                    goto label;
+                                    if (i_data[k] != j_data[k])
+                                    {
+                                        goto label;
+                                    }
                                 }
                             }
-                        }
-                        else
-                        {
-                            CONVASSERT("Vertex component comparison not implemented" == 0);
+                            else
+                            {
+                                CONVASSERT("Vertex component comparison not implemented for type" == 0);
+                            }
                         }
                     }
                 }
@@ -834,13 +895,17 @@ void Scene::join_identical_vertices()
                 dst_comp.comp_type = src_comp.comp_type;
                 dst_comp.elem_size = src_comp.elem_size;
                 dst_comp.prim_type = src_comp.prim_type;
+                dst_comp.vertex_stream_count = src_comp.vertex_stream_count;
+                dst_comp.elem_count = new_vertex_count * src_comp.vertex_stream_count;
 
-                dst_comp.elem_count = new_vertex_count;
-                dst_comp.data.resize(new_vertex_count * dst_comp.elem_size);
+                dst_comp.data.resize(dst_comp.elem_count * dst_comp.elem_size);
 
-                for (size_t j = 0; j < new_vertex_count; ++j)
+                for (size_t vc = 0; vc < src_comp.vertex_stream_count; ++vc)
                 {
-                    memcpy(&dst_comp.data[j * dst_comp.elem_size], &src_comp.data[new_to_old[j] * dst_comp.elem_size], dst_comp.elem_size);
+                    for (size_t j = 0; j < new_vertex_count; ++j)
+                    {
+                        memcpy(&dst_comp.data[(vc * new_vertex_count + j) * dst_comp.elem_size], &src_comp.data[(vc * old_vertex_count + new_to_old[j]) * dst_comp.elem_size], dst_comp.elem_size);
+                    }
                 }
             }
         }
@@ -860,7 +925,7 @@ void Scene::join_identical_vertices()
     vertex_components.swap(new_vertex_components);
 
 #ifdef PRINT_JOIN_RESULTS
-    gbl_log << (old_vertex_total - new_vertex_total) << "/" << old_vertex_total << " removed, " << std::fixed << std::setprecision(2) << (float(old_vertex_total - new_vertex_total) / float(old_vertex_total)) * 100.0f << "% smaller" << std::endl;
+    LOG(INFO) << (old_vertex_total - new_vertex_total) << "/" << old_vertex_total << " removed, " << std::fixed << std::setprecision(2) << (float(old_vertex_total - new_vertex_total) / float(old_vertex_total)) * 100.0f << "% smaller" << std::endl;
 #endif
 #undef TOTALS
 }
@@ -934,6 +999,93 @@ void Scene::recalculate_global_transforms()
         }
 
         global_transform.transform = transform;
+    });
+}
+
+void Scene::detect_mesh_anims_in_UVs()
+{
+    std::for_each(exeq_mode, submeshes.begin(), submeshes.end(), [this](SubMesh& submesh)
+    {
+        submesh.has_mesh_keys_in_UVs = false;
+
+        auto comp_it = submesh.components.find(VertexComponentType::ST);
+        if (comp_it == submesh.components.end() || comp_it->second.empty())
+        {
+            return;
+        }
+        auto& uv_comps = comp_it->second;
+        uint32_t vertex_count = (uint32_t)uv_comps[0]->elem_count;
+
+        if (uv_comps.size() > 1 && (uv_comps.size() & 1) && vertex_count > 3)
+        {
+            submesh.has_mesh_keys_in_UVs = true;
+
+            for (size_t j = 1; j < uv_comps.size() && submesh.has_mesh_keys_in_UVs; ++j)
+            {
+                glm::vec2* uv_data = (glm::vec2*)uv_comps.at(j)->data.data();
+
+                if (j & 1)
+                {
+                    bool all_uvs_equal = true;
+                    glm::vec2 base_vertex = uv_data[0];
+
+                    for (uint32_t k = 1; k < vertex_count && all_uvs_equal; ++k)
+                    {
+                        all_uvs_equal = glm::length2(base_vertex - uv_data[k]) < FLT_EPSILON;
+                    }
+                    submesh.has_mesh_keys_in_UVs = !all_uvs_equal;
+                }
+                else
+                {
+                    for (uint32_t k = 0; k < vertex_count && submesh.has_mesh_keys_in_UVs; ++k)
+                    {
+                        submesh.has_mesh_keys_in_UVs = uv_data[k][1] > -FLT_EPSILON && uv_data[k][1] <= FLT_EPSILON;
+                    }
+                }
+            }
+        }
+    });
+}
+
+void Scene::detect_colours_in_UVs()
+{
+    std::for_each(exeq_mode, submeshes.begin(), submeshes.end(), [this](SubMesh& submesh)
+    {
+        submesh.has_colours_in_UVs = false;
+
+        auto comp_it = submesh.components.find(VertexComponentType::ST);
+        if (comp_it == submesh.components.end() || comp_it->second.empty())
+        {
+            return;
+        }
+        auto& uv_comps = comp_it->second;
+        uint32_t vertex_count = (uint32_t)uv_comps[0]->elem_count;
+
+        if (uv_comps.size() == 3 && vertex_count > 3)
+        {
+            submesh.has_colours_in_UVs = true;
+
+            for (size_t j = 1; j < uv_comps.size() && submesh.has_colours_in_UVs; ++j)
+            {
+                glm::vec2* uv_data = (glm::vec2*)uv_comps[j]->data.data();
+
+                bool all_uvs_equal = true;
+                glm::vec2 base_vertex = uv_data[0];
+
+                for (uint32_t k = 1; k < vertex_count && all_uvs_equal; ++k)
+                {
+                    all_uvs_equal = glm::length2(base_vertex - uv_data[k]) < FLT_EPSILON;
+                }
+                submesh.has_colours_in_UVs = all_uvs_equal;
+
+                if (submesh.has_colours_in_UVs && uv_comps[j]->vertex_stream_count > 1)
+                {
+                    LOG(ERR) << "Submesh " << submesh.name << " may have colours in it's UVs, but it has more than 1 vertex stream which cannot currently be handled" << std::endl;
+                    submesh.has_colours_in_UVs = false;
+                    continue;
+                }
+            }
+        }
     });
 }
 
@@ -1054,6 +1206,7 @@ void Scene::FileObjectBlocks::unpack_data_block_element(std::istream& stream, ui
         vertex_data_offset += read<uint32_t>(stream);
         vertex_data_size = read<uint32_t>(stream);
     }
+    //if (vcomp.elem_count == 672) __debugbreak();
 
     CONVASSERT(vertex_data_size == vcomp.elem_count * vcomp.elem_size);
     vcomp.data.resize(vertex_data_size);
@@ -1272,19 +1425,19 @@ void Scene::FileObjectBlocks::pack_model_bounds(std::ostream& stream, uint32_t e
     }
 }
 
-bool Scene::evaluate_local_material_textures(const std::string& orig_scene_path, const std::string& intr_scene_path)
+bool Scene::evaluate_local_material_textures(const std::string& orig_scene_path, const std::string& intr_scene_path, const std::string& extension)
 {
     try
     {
         std::map<std::string, std::string> ref_name_id_map;
         std::map<std::string, std::string> ref_name_file_map;
 
-        gbl_log << "Evaluating material textures" << std::endl;
+        LOG(INFO) << "Evaluating material textures" << std::endl;
 
         if (!IO::FindLocalReferences(ref_name_id_map, orig_scene_path) ||
-            !IO::EvaluateReferencesFromLocalSearch(ref_name_file_map, ref_name_id_map, intr_scene_path, "png"))
+            !IO::EvaluateReferencesFromLocalSearch(ref_name_file_map, ref_name_id_map, intr_scene_path, extension))
         {
-            gbl_warn << "Failed to find any or all material textures" << std::endl;
+            LOG(WARN) << "Failed to find any or all material textures" << std::endl;
         }
 
         for (int64_t i = 0; i < materials.size(); ++i)
@@ -1315,7 +1468,7 @@ bool Scene::evaluate_local_material_textures(const std::string& orig_scene_path,
     }
     catch (const std::exception& e)
     {
-        gbl_err << "Error whilst trying to evaluate local material textures for " << orig_scene_path << " at " << intr_scene_path << " - " << e.what() << std::endl;
+        LOG(ERR) << "Error whilst trying to evaluate local material textures for " << orig_scene_path << " at " << intr_scene_path << " - " << e.what() << std::endl;
         return false;
     }
     return true;

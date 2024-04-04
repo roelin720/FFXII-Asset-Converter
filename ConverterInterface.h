@@ -1,31 +1,64 @@
 #pragma once
 #include <iostream>
+#include <sstream>
 
-struct GlobalStream
+struct GlobalLogger
 {
-	std::ostream* ostream = nullptr;
+	static FILE* file;
+	static std::stringstream sstream;
+	static bool to_file;
 
-	GlobalStream(std::ostream* ostream) : ostream(ostream) {}
+	uint32_t ID = 0;
+
+	GlobalLogger(uint32_t ID);
+
+	void write(const std::string& string);
+
+	static void direct_to_file();
+	static void direct_to_sstream();
+};
+
+struct GlobalLoggers
+{
+	static GlobalLogger InfoLogger;
+	static GlobalLogger KeyInfoLogger;
+	static GlobalLogger SuccessLogger;
+	static GlobalLogger WarningLogger;
+	static GlobalLogger ErrorLogger;
+};
+
+struct TemporaryLogger
+{
+	GlobalLogger& logger;
+	std::stringstream sstream;
+
+	TemporaryLogger(GlobalLogger& logger);
+	~TemporaryLogger();
+
+	TemporaryLogger& operator<<(const TemporaryLogger& val) = delete;
 
 	template<typename T>
-	GlobalStream& operator<<(const T& val)
+	TemporaryLogger& operator<<(const T& val)
 	{
-		if (ostream) *ostream << val;
+		sstream << val;
 		return *this;
 	}
 
-	typedef std::basic_ostream<char, std::char_traits<char> > manipT;
-	typedef manipT& (*manipFunc)(manipT&);
-	GlobalStream& operator<<(manipFunc manip)
+	typedef std::ostream& (*manipFunc)(std::ostream&);
+	inline TemporaryLogger& operator<<(manipFunc manip)
 	{
-		if (ostream) manip(*ostream); ;
+		manip(sstream);
 		return *this;
 	}
 };
 
-extern GlobalStream gbl_log;
-extern GlobalStream gbl_warn;
-extern GlobalStream gbl_err;
+#define INFO GlobalLoggers::InfoLogger
+#define WARN GlobalLoggers::WarningLogger
+#define ERR GlobalLoggers::ErrorLogger
+#define KEYINFO GlobalLoggers::KeyInfoLogger
+#define SUCCESS GlobalLoggers::SuccessLogger
+
+#define LOG(logger) TemporaryLogger(logger)
 
 namespace ConverterInterface
 {

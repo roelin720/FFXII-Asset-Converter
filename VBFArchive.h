@@ -43,8 +43,10 @@ public:
         auto operator<=>(const Mapping&) const = default;
     };
 
+    struct TreeNode;
     struct File
     {
+        TreeNode* node = nullptr;
         md5hash name_hash;
         std::string name;
         uint64_t block_list_offset = 0;
@@ -57,12 +59,14 @@ public:
     struct TreeNode
     {
         std::string name_segment;
+        File* file = nullptr;
+
         TreeNode* parent = nullptr;
         std::vector<TreeNode*> children;
 
         std::string full_name() const;
     };
-    std::vector<TreeNode> name_tree;
+    std::vector<TreeNode> tree;
 
     std::string arc_path;
     std::filesystem::file_time_type arc_timestamp;  
@@ -74,13 +78,13 @@ public:
     std::vector<Block> unused_block_lists;
 
     bool load(const std::string& path);
-    bool load_name_tree();
-    bool extract(const std::string& file_name, const std::filesystem::path& out_path) const;
-    bool inject(const std::string& file_name, const std::filesystem::path& in_path);
+    bool load_tree();
+    bool extract(const File& file, const std::filesystem::path& out_path) const;
+    bool inject(File& file, const std::filesystem::path& in_path);
     bool update_header();
 
-    bool extract_all(const std::string& folder, const VBFArchive::TreeNode& node) const;
-    bool inject_all(const std::string& folder, const VBFArchive::TreeNode& node);
+    bool extract_all(const VBFArchive::TreeNode& node, const std::string& folder, bool* stop_early = nullptr) const;
+    bool inject_all(VBFArchive::TreeNode& node, const std::string& folder, bool* stop_early = nullptr);
 
     const File* find_file(const std::string& file_name) const;
     File* find_file(const std::string& file_name);

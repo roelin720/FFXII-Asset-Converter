@@ -14,6 +14,7 @@ struct VertexComponent
 
     int64_t elem_size = 0;
     int64_t elem_count = 0;
+    int64_t vertex_stream_count = 1;
     std::vector<char> data;
 };
 
@@ -89,6 +90,9 @@ struct SubMesh
     std::map<VertexComponentType, std::vector<VertexComponent*>> components;
     std::vector<uint16_t> indices;
 
+    bool has_mesh_keys_in_UVs = false;
+    bool has_colours_in_UVs = false;
+
     int64_t file_material_ID = 0;
 
     void clear();
@@ -134,6 +138,8 @@ struct Scene
         ObjectBlock* asset_reference_import = nullptr;
         ObjectBlock* data_block = nullptr;
         ObjectBlock* vertex_stream = nullptr;
+        ObjectBlock* mesh_segment_context = nullptr;
+        ObjectBlock* mesh_segment_stream_binding = nullptr;
         ObjectBlock* material = nullptr;
         ObjectBlock* mesh_instance_bounds = nullptr;
         ObjectBlock* mesh_skel_bounds = nullptr;
@@ -177,7 +183,7 @@ struct Scene
     bool unpack(const std::string& orig_scene_path);
     bool pack(const std::string& mod_scene_path, const std::string& orig_scene_path);
 
-    bool evaluate_local_material_textures(const std::string& orig_scene_path, const std::string& intr_scene_path);
+    bool evaluate_local_material_textures(const std::string& orig_scene_path, const std::string& intr_scene_path, const std::string& extenstion = "png");
 
     bool unpack_shared_data(std::istream& stream);
     bool unpack_nodes(std::istream& stream);
@@ -191,4 +197,6 @@ struct Scene
     void join_identical_vertices();
     void recalculate_model_bounds();
     void recalculate_global_transforms();
+    void detect_mesh_anims_in_UVs();
+    void detect_colours_in_UVs();
 };

@@ -1,9 +1,8 @@
 #include "Texture2D.h"
-#include <DirectXTex/DirectXTex.h>
 #include "ConverterInterface.h"
 #include <fstream>
 
-#define CHECKBLOCKREQUIRED(b) if (!b) { gbl_err << "Error: Object block '"#b"' not present" << std::endl; return false; }
+#define CHECKBLOCKREQUIRED(b) if (!b) { LOG(ERR) << "Error: Object block '"#b"' not present" << std::endl; return false; }
 #define ASSERTBLOCKREQUIRED(b) if (!b || b->elem_count == 0) { throw std::exception("Error: Object block '"#b"' not present"); }
 
 using namespace IO;
@@ -49,6 +48,14 @@ namespace
         .depth = 1,
         .ddspf = DirectX::DDSPF_DXT1,
         .caps = DDS_SURFACE_FLAGS_TEXTURE,
+    } }; 
+    const Texture2D::DDSPrefix L8_DDS_prefix = { {},
+    {
+        .size = sizeof(DirectX::DDS_HEADER),
+        .flags = DDS_HEADER_FLAGS_TEXTURE,
+        .depth = 1,
+        .ddspf = DirectX::DDSPF_L8,
+        .caps = DDS_SURFACE_FLAGS_TEXTURE,
     } };
     const Texture2D::DDSPrefix A8_DDS_prefix = { {},
     {
@@ -59,7 +66,65 @@ namespace
         .caps = DDS_SURFACE_FLAGS_TEXTURE,
     } };
 
-    constexpr auto norm_to_3channels = [](DirectX::XMVECTOR* outPixels, const DirectX::XMVECTOR* inPixels, size_t width, size_t y)
+    inline Texture2D::DDSPrefix get_dds_prefix(DXGI_FORMAT format)
+    {
+        switch (format)
+        {
+        case DXGI_FORMAT_BC5_UNORM:      return BC5_DDS_prefix;
+        case DXGI_FORMAT_BC2_UNORM:      return DXT3_DDS_prefix;
+        case DXGI_FORMAT_BC3_UNORM:      return DXT5_DDS_prefix;
+        case DXGI_FORMAT_BC1_UNORM:      return DXT1_DDS_prefix;
+        case DXGI_FORMAT_B8G8R8A8_UNORM: return ARGB8_DDS_prefix;
+        case DXGI_FORMAT_A8_UNORM:       return A8_DDS_prefix;
+        case DXGI_FORMAT_R8_UNORM:       return L8_DDS_prefix;
+        default: return Texture2D::DDSPrefix();
+        }
+    }
+
+    DXGI_FORMAT GetDXGIFormat(std::string format_name)
+    {
+             if (format_name == "BC5")   return DXGI_FORMAT_BC5_UNORM;
+        else if (format_name == "DXT5")  return DXGI_FORMAT_BC3_UNORM;
+        else if (format_name == "DXT3")  return DXGI_FORMAT_BC2_UNORM;
+        else if (format_name == "DXT1")  return DXGI_FORMAT_BC1_UNORM;
+        else if (format_name == "ARGB8") return DXGI_FORMAT_B8G8R8A8_UNORM;
+        else if (format_name == "A8")    return DXGI_FORMAT_A8_UNORM;
+        else if (format_name == "L8")    return DXGI_FORMAT_R8_UNORM;
+        else
+        {
+            LOG(ERR) << "Unrecognised dds format " << format_name << std::endl;
+            return DXGI_FORMAT_UNKNOWN;
+        }
+    }
+
+    std::string GetDXGIFormatString(DXGI_FORMAT format)
+    {
+        switch (format) {
+        case DXGI_FORMAT_BC5_UNORM:      return "BC5";
+        case DXGI_FORMAT_BC3_UNORM:      return "DXT5";
+        case DXGI_FORMAT_BC2_UNORM:      return "DXT3";
+        case DXGI_FORMAT_BC1_UNORM:      return "DXT1";
+        case DXGI_FORMAT_B8G8R8A8_UNORM: return "ARGB8";
+        case DXGI_FORMAT_A8_UNORM:       return "A8";
+        case DXGI_FORMAT_R8_UNORM:       return "L8";
+        default: throw std::runtime_error("Unrecognised dds format enum");
+        }
+    }
+
+    DirectX::WICCodecs GetCodecID(const std::string& path)
+    {
+        std::string ext = GetExtension(path);
+
+        if (ext == "bmp")                  return DirectX::WIC_CODEC_BMP;
+        if (ext == "jpg" || ext == "jpeg") return DirectX::WIC_CODEC_JPEG;
+        if (ext == "png")                  return DirectX::WIC_CODEC_PNG;
+        if (ext == "tiff")                 return DirectX::WIC_CODEC_TIFF;
+        if (ext == "wmp")                  return DirectX::WIC_CODEC_WMP;
+
+        return (DirectX::WICCodecs)0;
+    }
+
+    void norm_to_3channels(DirectX::XMVECTOR* outPixels, const DirectX::XMVECTOR* inPixels, size_t width, size_t y)
     {
         UNREFERENCED_PARAMETER(y);
         for (size_t j = 0; j < width; ++j)
@@ -81,7 +146,7 @@ namespace
         }
     };
 
-    constexpr auto norm_to_2channels = [](DirectX::XMVECTOR* outPixels, const DirectX::XMVECTOR* inPixels, size_t width, size_t y)
+    void norm_to_2channels(DirectX::XMVECTOR* outPixels, const DirectX::XMVECTOR* inPixels, size_t width, size_t y)
     {
         UNREFERENCED_PARAMETER(y);
         for (size_t j = 0; j < width; ++j)
@@ -92,46 +157,16 @@ namespace
         }
     };
 
-    inline constexpr Texture2D::DDSPrefix get_dds_prefix(DXGI_FORMAT format)
+    size_t MaxMips(_In_ size_t width, _In_ size_t height) noexcept
     {
-        switch (format)
+        size_t mipLevels = 1;
+        while (height > 1 || width > 1)
         {
-        case DXGI_FORMAT_BC5_UNORM:      return BC5_DDS_prefix;
-        case DXGI_FORMAT_BC2_UNORM:      return DXT3_DDS_prefix;
-        case DXGI_FORMAT_BC3_UNORM:      return DXT5_DDS_prefix;
-        case DXGI_FORMAT_BC1_UNORM:      return DXT1_DDS_prefix;
-        case DXGI_FORMAT_B8G8R8A8_UNORM: return ARGB8_DDS_prefix;
-        case DXGI_FORMAT_A8_UNORM:       return A8_DDS_prefix;
-        default: return Texture2D::DDSPrefix();
+            if (height > 1)  height >>= 1;
+            if (width > 1) width >>= 1;
+            ++mipLevels;
         }
-    }
-
-    DXGI_FORMAT GetDXGIFormat(std::string format_name)
-    {
-        if (format_name == "BC5")        return DXGI_FORMAT_BC5_UNORM;
-        else if (format_name == "DXT5")  return DXGI_FORMAT_BC3_UNORM;
-        else if (format_name == "DXT3")  return DXGI_FORMAT_BC2_UNORM;
-        else if (format_name == "DXT1")  return DXGI_FORMAT_BC1_UNORM;
-        else if (format_name == "ARGB8") return DXGI_FORMAT_B8G8R8A8_UNORM;
-        else if (format_name == "A8")    return DXGI_FORMAT_A8_UNORM;
-        else
-        {
-            gbl_err << "Unrecognised dds format " << format_name << std::endl;
-            return DXGI_FORMAT_UNKNOWN;
-        }
-    }
-
-    DirectX::WICCodecs GetCodecID(const std::string& path)
-    {
-        std::string ext = GetExtension(path);
-
-        if (ext == "bmp")                  return DirectX::WIC_CODEC_BMP;
-        if (ext == "jpg" || ext == "jpeg") return DirectX::WIC_CODEC_JPEG;
-        if (ext == "png")                  return DirectX::WIC_CODEC_PNG;
-        if (ext == "tiff")                 return DirectX::WIC_CODEC_TIFF;
-        if (ext == "wmp")                  return DirectX::WIC_CODEC_WMP;
-
-        return (DirectX::WICCodecs)0;
+        return mipLevels;
     }
 }
 
@@ -141,7 +176,7 @@ bool Texture2D::FileObjectBlocks::initialise(std::istream& stream)
 
     if (!LoadObjectBlocks(stream, *this))
     {
-        gbl_err << "Failed to load object blocks" << std::endl;
+        LOG(ERR) << "Failed to load object blocks" << std::endl;
         return false;
     }
 
@@ -154,28 +189,27 @@ bool Texture2D::FileObjectBlocks::initialise(std::istream& stream)
     return true;
 }
 
-bool Texture2D::unpack(const std::string& orig_texture_file)
+bool Texture2D::unpack(const std::string& orig_texture_file) 
 {
     try
     {
         std::ifstream stream = std::ifstream(orig_texture_file, std::ios::binary);
         if (!stream)
         {
-            gbl_err << "IO Error: Could not open " << orig_texture_file << std::endl;
+            LOG(ERR) << "IO Error: Could not open " << orig_texture_file << std::endl;
             return false;
         }
 
         if (!obj_blocks.initialise(stream))
         {
-            gbl_err << "Failed to load object blocks" << std::endl;
+            LOG(ERR) << "Failed to load object blocks" << std::endl;
             return false;
         }
 
         if (obj_blocks.cube_map != nullptr)
         {
-            gbl_warn << "Cube-maps are currently not supported " << std::endl;
-            gbl_err.ostream->flush();
-            gbl_err.ostream = gbl_warn.ostream; //not desirable but a quick and dirty solution to making cubemap errors hidable in the GUI
+            LOG(WARN) << "Cube-maps are currently not supported " << std::endl;
+            ERR.ID = WARN.ID; //not desirable but a quick and dirty solution to making cubemap errors hidable in the GUI
             return false;
         }
 
@@ -203,7 +237,7 @@ bool Texture2D::unpack(const std::string& orig_texture_file)
         CONVASSERT(ob_texture.data_size == 116 || ob_texture.data_size == 22);
         if (ob_texture.data_size == 116)
         {
-            seek(stream, ob_texture.data_offset + 2, std::ios::beg);
+            seek(stream, ob_texture.data_offset + 12, std::ios::beg);
             prefix.mipMapCount = read<uint32_t>(stream) + 1;
 
             seek(stream, ob_texture.data_offset + 28, std::ios::beg);
@@ -223,7 +257,7 @@ bool Texture2D::unpack(const std::string& orig_texture_file)
         size_t row_pitch = 0, slice_pitch = 0;
         if (HRESULT res = DirectX::ComputePitch(dxgi_format, prefix.width, prefix.height, row_pitch, slice_pitch, DirectX::CP_FLAGS_LEGACY_DWORD); res < 0)
         {
-            gbl_err << "Failed load compute pitch for texture " << orig_texture_file << std::endl;
+            LOG(ERR) << "Failed load compute pitch for texture " << orig_texture_file << std::endl;
             return false;
         }
         prefix.pitchOrLinearSize = (uint32_t)row_pitch;
@@ -247,63 +281,28 @@ bool Texture2D::unpack(const std::string& orig_texture_file)
     }
     catch (std::exception& e)
     {
-        gbl_err << "ERROR: " << e.what() << std::endl;
+        LOG(ERR) << "ERROR: " << e.what() << std::endl;
         return false;
     }
 	return true;
 }
 
-bool Texture2D::save(const std::string& intr_texture_file)
+bool Texture2D::save(const std::string& intr_texture_file) const
 {
     try
     {
-        if (header.magic_bytes == 0)
+        DirectX::ScratchImage dds_image;
+        if (!to_image(dds_image))
         {
-            gbl_err << "The texture has not been unpacked to be able to save " << intr_texture_file << std::endl;
+            LOG(ERR) << "Failed to convert texture to image for saving " << intr_texture_file << std::endl;
             return false;
         }
-
-        std::vector<char> dds_file_data;
-
-        dds_file_data.resize(dds_pixel_data.size() + sizeof(prefix));
-        memcpy(dds_file_data.data(), &prefix, sizeof(prefix));
-        memcpy(dds_file_data.data() + sizeof(prefix), dds_pixel_data.data(), dds_pixel_data.size());
 
         DirectX::WICCodecs codec_ID = GetCodecID(intr_texture_file);
         if (!codec_ID)
         {
-            gbl_err << "Unsupported output image format " << intr_texture_file << std::endl;
+            LOG(ERR) << "Unsupported output image format " << intr_texture_file << std::endl;
             return false;
-        }
-
-        DirectX::ScratchImage dds_image;
-        if (HRESULT res = DirectX::LoadFromDDSMemory(dds_file_data.data(), dds_file_data.size(), DirectX::DDS_FLAGS_LEGACY_DWORD, nullptr, dds_image); res < 0)
-        {
-            gbl_err << "Failed load DDS texture from memory (likely a formatting failure)" << std::endl;
-            return false;
-        }
-        std::vector<char>().swap(dds_file_data);
-
-        if (DirectX::IsCompressed(dds_image.GetMetadata().format))
-        {
-            DirectX::ScratchImage decompressed_image;
-            std::swap(dds_image, decompressed_image);
-            if (HRESULT res = DirectX::Decompress(*decompressed_image.GetImage(0, 0, 0), DXGI_FORMAT_R8G8B8A8_UNORM, dds_image); res < 0)
-            {
-                gbl_err << "Failed load DDS texture from memory (likely a formatting failure)" << std::endl;
-                return false;
-            }
-        }
-
-        if (asset_ref_name.find("_n.dds") != std::string::npos)
-        {
-            DirectX::ScratchImage dx_norm_map;
-            std::swap(dds_image, dx_norm_map);
-            if (HRESULT res = DirectX::TransformImage(*dx_norm_map.GetImage(0, 0, 0), norm_to_3channels, dds_image); res < 0)
-            {
-                gbl_err << "Failed to transform normals" << std::endl;
-                return false;
-            }
         }
 
         if (HRESULT res = DirectX::SaveToWICFile(
@@ -313,15 +312,61 @@ bool Texture2D::save(const std::string& intr_texture_file)
             std::wstring(intr_texture_file.begin(), intr_texture_file.end()).c_str()
         ); res < 0)
         {
-            gbl_err << "Failed to save " << intr_texture_file << std::endl;
+            LOG(ERR) << "Failed to save " << intr_texture_file << std::endl;
             return false;
         }
     }
     catch (std::exception& e)
     {
-        gbl_err << "ERROR: " << e.what() << std::endl;
+        LOG(ERR) << "ERROR: " << e.what() << std::endl;
         return false;
     }
+    return true;
+}
+
+bool Texture2D::to_image(DirectX::ScratchImage& image) const
+{
+    if (header.magic_bytes == 0)
+    {
+        LOG(ERR) << "The texture has not been unpacked to be able to conver to image" << std::endl;
+        return false;
+    }
+
+    std::vector<char> dds_file_data;
+
+    dds_file_data.resize(dds_pixel_data.size() + sizeof(prefix));
+    memcpy(dds_file_data.data(), &prefix, sizeof(prefix));
+    memcpy(dds_file_data.data() + sizeof(prefix), dds_pixel_data.data(), dds_pixel_data.size());
+
+    if (HRESULT res = DirectX::LoadFromDDSMemory(dds_file_data.data(), dds_file_data.size(), DirectX::DDS_FLAGS_LEGACY_DWORD, nullptr, image); res < 0)
+    {
+        LOG(ERR) << "Failed load DDS texture from memory (likely a formatting failure)" << std::endl;
+        return false;
+    }
+    std::vector<char>().swap(dds_file_data);
+
+    if (DirectX::IsCompressed(image.GetMetadata().format))
+    {
+        DirectX::ScratchImage compressed_image;
+        std::swap(image, compressed_image);
+        if (HRESULT res = DirectX::Decompress(*compressed_image.GetImage(0, 0, 0), DXGI_FORMAT_R8G8B8A8_UNORM, image); res < 0)
+        {
+            LOG(ERR) << "Failed load DDS texture from memory (likely a formatting failure)" << std::endl;
+            return false;
+        }
+    }
+
+    if (asset_ref_name.find("_n.dds") != std::string::npos)
+    {
+        DirectX::ScratchImage dx_norm_map;
+        std::swap(image, dx_norm_map);
+        if (HRESULT res = DirectX::TransformImage(*dx_norm_map.GetImage(0, 0, 0), norm_to_3channels, image); res < 0)
+        {
+            LOG(ERR) << "Failed to transform normals" << std::endl;
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -331,7 +376,7 @@ bool Texture2D::apply(const std::string& intr_texture_file)
     {
         if (header.magic_bytes == 0)
         {
-            gbl_err << "The texture has not been unpacked to be able to apply " << intr_texture_file << std::endl;
+            LOG(ERR) << "The texture has not been unpacked to be able to apply " << intr_texture_file << std::endl;
             return false;
         }
 
@@ -343,12 +388,14 @@ bool Texture2D::apply(const std::string& intr_texture_file)
             wic_image
         ); res < 0)
         {
-            gbl_err << "Failed to load " << intr_texture_file << std::endl;
+            LOG(ERR) << "Failed to load " << intr_texture_file << std::endl;
             return false;
         }
 
         prefix.width = (uint32_t)wic_image.GetMetadata().width;
         prefix.height = (uint32_t)wic_image.GetMetadata().height;
+        prefix.mipMapCount = std::min(prefix.mipMapCount, uint32_t(MaxMips(prefix.width, prefix.height)));
+        dxgi_format = dxgi_format == DXGI_FORMAT_BC1_UNORM ? DXGI_FORMAT_BC3_UNORM : dxgi_format;
 
         if (asset_ref_name.find("_n.dds") != std::string::npos)
         {
@@ -356,7 +403,7 @@ bool Texture2D::apply(const std::string& intr_texture_file)
             std::swap(wic_image, dx_norm_map);
             if (HRESULT res = DirectX::TransformImage(*dx_norm_map.GetImage(0, 0, 0), norm_to_2channels, wic_image); res < 0)
             {
-                gbl_err << "Failed to transform normals" << std::endl;
+                LOG(ERR) << "Failed to transform normals" << std::endl;
                 return false;
             }
         }
@@ -367,10 +414,20 @@ bool Texture2D::apply(const std::string& intr_texture_file)
             std::swap(wic_image, backwards_image);
             if (HRESULT res = DirectX::Convert(*backwards_image.GetImage(0, 0, 0), dxgi_format, DirectX::TEX_FILTER_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, wic_image); res < 0)
             {
-                gbl_err << "Failed load DDS texture from memory (likely a formatting failure)" << std::endl;
+                LOG(ERR) << "Failed load DDS texture from memory (likely a formatting failure)" << std::endl;
                 return false;
             }
         }
+
+        //{
+        //    DirectX::ScratchImage unpremultiplied_image;
+        //    std::swap(wic_image, unpremultiplied_image);
+        //    if (HRESULT res = DirectX::PremultiplyAlpha(unpremultiplied_image.GetImages(), unpremultiplied_image.GetImageCount(), unpremultiplied_image.GetMetadata(), DirectX::TEX_PMALPHA_DEFAULT, wic_image); res < 0)
+        //    {
+        //        LOG(ERR) << "Failed to premultiply alpha" << std::endl;
+        //        return false;
+        //    }
+        //}
 
         if (wic_image.GetMetadata().mipLevels != prefix.mipMapCount)
         {
@@ -378,7 +435,7 @@ bool Texture2D::apply(const std::string& intr_texture_file)
             std::swap(wic_image, unmipped_image);
             if (HRESULT res = DirectX::GenerateMipMaps(*unmipped_image.GetImage(0, 0, 0), DirectX::TEX_FILTER_DEFAULT, prefix.mipMapCount, wic_image); res < 0)
             {
-                gbl_err << "Failed generate mipmaps" << std::endl;
+                LOG(ERR) << "Failed generate mipmaps" << std::endl;
                 return false;
             }
         }
@@ -389,7 +446,7 @@ bool Texture2D::apply(const std::string& intr_texture_file)
             std::swap(wic_image, uncompressed_image);
             if (HRESULT res = DirectX::Compress(uncompressed_image.GetImages(), uncompressed_image.GetImageCount(), uncompressed_image.GetMetadata(), dxgi_format, DirectX::TEX_COMPRESS_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, wic_image); res < 0)
             {
-                gbl_err << "Failed load DDS texture from memory (likely a formatting failure)" << std::endl;
+                LOG(ERR) << "Failed load DDS texture from memory (likely a formatting failure)" << std::endl;
                 return false;
             }
         }
@@ -401,33 +458,33 @@ bool Texture2D::apply(const std::string& intr_texture_file)
     }
     catch (std::exception& e)
     {
-        gbl_err << "ERROR: " << e.what() << std::endl;
+        LOG(ERR) << "ERROR: " << e.what() << std::endl;
         return false;
     }
 	return true;
 }
 
-bool Texture2D::pack(const std::string& mod_texture_file, const std::string& orig_texture_file)
+bool Texture2D::pack(const std::string& mod_texture_file, const std::string& orig_texture_file) const
 {
     try
     {
         if (header.magic_bytes == 0)
         {
-            gbl_err << orig_texture_file << " has not been unpacked to be able to pack" << std::endl;
+            LOG(ERR) << orig_texture_file << " has not been unpacked to be able to pack" << std::endl;
             return false;
         }
 
         std::ifstream istream = std::ifstream(orig_texture_file, std::ios::binary);
         if (!istream)
         {
-            gbl_err << "IO Error: Could not open " << orig_texture_file << std::endl;
+            LOG(ERR) << "IO Error: Could not open " << orig_texture_file << std::endl;
             return false;
         }
 
         std::ofstream ostream = std::ofstream(mod_texture_file, std::ios::binary);
         if (!ostream)
         {
-            gbl_err << "IO Error: Could not open " << mod_texture_file << std::endl;
+            LOG(ERR) << "IO Error: Could not open " << mod_texture_file << std::endl;
             return false;
         }
 
@@ -448,9 +505,13 @@ bool Texture2D::pack(const std::string& mod_texture_file, const std::string& ori
         istream.close();
         seek(ostream, 0, std::ios::beg);
         write(ostream, prelim_data.data(), prelim_data.size());
+        std::vector<char>().swap(prelim_data);
+
         write(ostream, dds_pixel_data.data(), dds_pixel_data.size());
 
-        std::vector<char>().swap(prelim_data);
+        std::string format_str = GetDXGIFormatString(dxgi_format); // not safe if it was changed due to string length
+        seek(ostream, obj_blocks.back().data_offset + obj_blocks.back().objects_size + 11, std::ios::beg);
+        write(ostream, format_str.c_str(), format_str.size() + 1);
 
         CHECKBLOCKREQUIRED(obj_blocks.texture2D);
         ObjectBlock& ob_texture = *obj_blocks.texture2D;
@@ -458,12 +519,20 @@ bool Texture2D::pack(const std::string& mod_texture_file, const std::string& ori
         CONVASSERT(ob_texture.data_size == 116 || ob_texture.data_size == 22);
         if (ob_texture.data_size == 116)
         {
+            seek(ostream, ob_texture.data_offset + 12, std::ios::beg);
+            write<uint32_t>(ostream, prefix.mipMapCount - 1);
+            write<uint32_t>(ostream, MaxMips(prefix.width, prefix.height) - 1);
+
             seek(ostream, ob_texture.data_offset + 28, std::ios::beg);
             write<uint32_t>(ostream, prefix.width);
             write<uint32_t>(ostream, prefix.height);
         }
         else if (ob_texture.data_size == 22)
         {
+            seek(ostream, ob_texture.data_offset + 2, std::ios::beg);
+            write<uint32_t>(ostream, prefix.mipMapCount - 1);
+            write<uint32_t>(ostream, MaxMips(prefix.width, prefix.height) - 1);
+
             seek(ostream, ob_texture.data_offset + 14, std::ios::beg);
             write<uint32_t>(ostream, prefix.width);
             write<uint32_t>(ostream, prefix.height);
@@ -474,7 +543,7 @@ bool Texture2D::pack(const std::string& mod_texture_file, const std::string& ori
     }
     catch (std::exception& e)
     {
-        gbl_err << "ERROR: " << e.what() << std::endl;
+        LOG(ERR) << "ERROR: " << e.what() << std::endl;
         return false;
     }
 	return true;

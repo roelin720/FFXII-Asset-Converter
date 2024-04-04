@@ -7,10 +7,12 @@ class Pipe
 {
 protected:
 	Pipe() = default;
-	std::string make_ID();
+
 public:
 	HANDLE handle = INVALID_HANDLE_VALUE;
 	std::string name;
+
+	std::string make_ID() const;
 
 	bool opened() const;
 	size_t peek() const;
@@ -48,5 +50,5 @@ public:
 class PipeClient : public Pipe
 {
 public:
-	bool open(const std::string& name);
+	bool open(const std::string& name, uint32_t timeout = 0);
 };

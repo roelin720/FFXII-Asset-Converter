@@ -1,5 +1,23 @@
 
 # SOURCE CODE MODIFICATIONS:
+#	in FBXEXPORTER, in order to fix a bug that doesn't allow blender to import with blendshape:
+#		the Blendshape pDiff magnitude check has been removed &
+#		the line containing:
+#			blendshape_name + FBX::SEPARATOR + "Blendshape"
+#		has been chaned to
+#			blendshape_name + FBX::SEPARATOR + "Geometry"
+#	The number of exportable colours has been changes to be greater than 1 by placing the code segment in a for loop
+#	Also added this code in FBXExporter.cpp:
+#        for (unsigned int lr = 1; lr < m->GetNumColorChannels(); ++lr) {
+#            FBX::Node layerExtra("Layer", int32_t(lr));
+#            layerExtra.AddChild("Version", int32_t(100));
+#            FBX::Node leExtra("LayerElement");
+#            leExtra.AddChild("Type", "LayerElementColor");
+#            leExtra.AddChild("TypedIndex", int32_t(lr));
+#            layerExtra.AddChild(leExtra);
+#            layerExtra.Dump(outstream, binary, indent);
+#        }
+#	above where a similar block exists for UVs
 #	UnitScaleFactor has been changed to from 1 to 100 in the fbx exporter
 #   AI_MAX_NUMBER_OF_TEXTURECOORDS has been increased to 16
 #	mesh.h has been modified to change:
@@ -28,11 +46,6 @@ set(ASSIMP_BUILD_STATIC_LIB OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ZLIB ON CACHE BOOL "" FORCE)
-set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT ON CACHE BOOL "" FORCE)
-set(ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT ON CACHE BOOL "" FORCE)
-set(ASSIMP_BUILD_INJECTED_IMPORTER ON CACHE BOOL "" FORCE)
-set(ASSIMP_BUILD_FBX_IMPORTER ON CACHE BOOL "" FORCE)
-set(ASSIMP_BUILD_FBX_EXPORTER ON CACHE BOOL "" FORCE)
 
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/assimp")
 

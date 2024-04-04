@@ -1,0 +1,56 @@
+﻿project (ConverterViewer)
+
+include(GLFW)
+include(CTPL)	
+LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${glfw_SOURCE_DIR}")
+LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${ctpl_SOURCE_DIR}")
+LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${assimp_SOURCE_DIR}/contrib/zlib")
+LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${assimp_BINARY_DIR}/contrib/zlib")
+LIST(APPEND ADDITIONAL_INCLUDE_DIRECTORIES "${THIRD_PARTY_DIR}/glad/include")
+
+set(VIEWER_SOURCES ${CONVERTER_SOURCES}
+	"${THIRD_PARTY_DIR}/glad/include/glad/glad.h"
+	"${THIRD_PARTY_DIR}/glad/src/glad.c"
+	"${CMAKE_CURRENT_LIST_DIR}/Shader.h"
+	"${CMAKE_CURRENT_LIST_DIR}/Shader.cpp"
+	"${CMAKE_CURRENT_LIST_DIR}/Camera.h"
+	"${CMAKE_CURRENT_LIST_DIR}/Camera.cpp"
+	"${CMAKE_CURRENT_LIST_DIR}/Drawable.h"
+	"${CMAKE_CURRENT_LIST_DIR}/Drawable.cpp"
+	"${CMAKE_CURRENT_LIST_DIR}/Renderer.h"
+	"${CMAKE_CURRENT_LIST_DIR}/Renderer.cpp"
+	"${CMAKE_CURRENT_LIST_DIR}/Viewer.h"
+	"${CMAKE_CURRENT_LIST_DIR}/Viewer.cpp"
+	"${CMAKE_CURRENT_LIST_DIR}/Main.cpp"
+)
+
+add_executable(${PROJECT_NAME} ${VIEWER_SOURCES})
+add_dependencies(${PROJECT_NAME} GenerateEnums)
+
+set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 23)
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE "CONVERTER_VERSION=\"${CONVERTER_VERSION}\"")
+target_compile_definitions(${PROJECT_NAME} PRIVATE "VIEWER_BUILD")
+if (BUILD_TYPE STREQUAL "debug")
+target_compile_definitions(${PROJECT_NAME} PRIVATE "DEBUG")
+endif()
+
+set_target_properties(${PROJECT_NAME} PROPERTIES LINKER_LANGUAGE CXX)
+
+target_include_directories(${PROJECT_NAME} PUBLIC "${ADDITIONAL_INCLUDE_DIRECTORIES}")
+target_link_libraries(${PROJECT_NAME} PUBLIC assimp DirectXTex glfw)
+
+if(POPULATE_BIN)
+	set(VIEWER_BIN_NAME "FFXIIConvertViewer")
+	set(TMP_DIR "${ROOT_PATH}/bin/${VIEWER_BIN_NAME}v${CONVERTER_VERSION}")
+	set(VIEWER_EXE_PATH "${ROOT_PATH}/bin/${VIEWER_BIN_NAME}.exe")
+	set(VIEWER_ZIP_PATH "${ROOT_PATH}/bin/${VIEWER_BIN_NAME}v${CONVERTER_VERSION}.zip")	
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E make_directory "${TMP_DIR}")
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_PATH}/bundled_files" "${TMP_DIR}")
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}> "${VIEWER_EXE_PATH}")
+	#add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_RC_COMPILER} "${CMAKE_CURRENT_SOURCE_DIR}/appicon.rc" "${VIEWER_EXE_PATH}")
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy "${VIEWER_EXE_PATH}" "${TMP_DIR}/${VIEWER_BIN_NAME}.exe")
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD WORKING_DIRECTORY "${ROOT_PATH}/bin" COMMAND ${CMAKE_COMMAND} -E tar "cfv" "${VIEWER_ZIP_PATH}" --format=zip "${TMP_DIR}")
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E remove "${TMP_DIR}/${VIEWER_BIN_NAME}.exe")
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E remove_directory "${TMP_DIR}")
+endif()

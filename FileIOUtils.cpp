@@ -94,7 +94,7 @@ bool IO::ReadWholeFile(std::vector<char>& data, const std::string& path)
     catch (const std::exception& e)
     {
         const auto ec = std::error_code{ errno, std::system_category() };
-        gbl_err << "IO ERROR: " << e.what() << " " << ec.message() << std::endl;
+        LOG(ERR) << "IO ERROR: " << e.what() << " " << ec.message() << std::endl;
         return false;
     }
     return true;
@@ -124,7 +124,7 @@ std::string IO::GetExtension(const std::string& path)
     }
     catch (const std::exception&)
     {
-        gbl_warn << "Failed to retrieve extension on " << path << std::endl;
+        LOG(WARN) << "Failed to retrieve extension on " << path << std::endl;
         return "";
     }
 }
@@ -138,25 +138,29 @@ bool IO::VerifyParentFolderAccessible(const std::string& path)
 {
     try
     {
-        size_t parent_end = path.find_last_of("\\/:");
+        size_t parent_end = path.find_last_of("\\/");
         if (std::string::npos == parent_end)
         {
-            gbl_err << "File's parent folder is not accessible \"" << path << "\"" << std::endl;
+            LOG(ERR) << "File's parent folder is not accessible \"" << path << "\"" << std::endl;
             return false;
         }
         std::string dir = path.substr(0, parent_end);
+        if (dir.back() == ':')
+        {
+            dir.push_back('/');
+        }
 
         struct _stat64 stat_buffer;
         if (_stat64(dir.c_str(), &stat_buffer) != 0 || (stat_buffer.st_mode & S_IFDIR) == 0)
         {
-            gbl_err << "File's parent folder is not accessible \"" << path << "\"" << std::endl;
+            LOG(ERR) << "File's parent folder is not accessible \"" << path << "\"" << std::endl;
             return false;
         }
     }
     catch (const std::exception& e)
     {
         const auto ec = std::error_code{ errno, std::system_category() };
-        gbl_err << "IO ERROR: " << e.what() << " " << ec.message() << std::endl;
+        LOG(ERR) << "IO ERROR: " << e.what() << " " << ec.message() << std::endl;
         return false;
     }
     return true;
@@ -257,7 +261,7 @@ bool IO::VerifyFileAccessible(const std::string& path)
     struct _stat64 stat_buffer;
     if (path == "." || _stat64(path.c_str(), &stat_buffer) != 0)
     {
-        gbl_err << "File is not accessible \"" << path << "\"" << std::endl;
+        LOG(ERR) << "File is not accessible \"" << path << "\"" << std::endl;
         return false;
     }
     return true;
@@ -273,7 +277,7 @@ void IO::CancelWrite(const std::string& path, std::ofstream* stream)
     catch (const std::exception& e)
     {
         const auto ec = std::error_code{ errno, std::system_category() };
-        gbl_err << "IO ERROR - failed to delete incomplete file: " << e.what() << " " << ec.message() << std::endl;
+        LOG(ERR) << "IO ERROR - failed to delete incomplete file: " << e.what() << " " << ec.message() << std::endl;
     }
 }
 
@@ -286,14 +290,14 @@ bool IO::VerifyHeader(const std::string& phyre_path)
         file.read((char*)header.data(), 5);
         if (header != "RYHPT")
         {
-            gbl_err << "IO ERROR: Incompatible file structure detected" << std::endl;
+            LOG(ERR) << "IO ERROR: Incompatible file structure detected" << std::endl;
             return false;
         }
     }
     catch (const std::exception& e)
     {
         const auto ec = std::error_code{ errno, std::system_category() };
-        gbl_err << "IO ERROR: " << e.what() << " " << ec.message() << std::endl;
+        LOG(ERR) << "IO ERROR: " << e.what() << " " << ec.message() << std::endl;
         return false;
     }
     return true;
@@ -346,7 +350,7 @@ std::string IO::TruePathCase(const std::string& path)
     catch (const std::exception& e)
     {
         const auto ec = std::error_code{ errno, std::system_category() };
-        gbl_err << "IO ERROR: Failed to retrive path's true case - " << e.what() << " " << ec.message() << std::endl;
+        LOG(ERR) << "IO ERROR: Failed to retrive path's true case - " << e.what() << " " << ec.message() << std::endl;
         return path;
     }
     return path;
@@ -360,7 +364,7 @@ std::string IO::ParentPath(const std::string& path)
     }
     catch (const std::exception& e)
     {
-        gbl_err << "IO ERROR: Failed to retrive path \"" << path << "\" parent path - " << e.what() << std::endl;
+        LOG(ERR) << "IO ERROR: Failed to retrive path \"" << path << "\" parent path - " << e.what() << std::endl;
     }
     return "";
 }
@@ -465,7 +469,7 @@ std::string IO::CreateTmpPath(const std::string& folder_name)
     }
     if (!CreateDirectoryA(path.c_str(), NULL) && ERROR_ALREADY_EXISTS != GetLastError())
     {
-        gbl_err << "Failed to create temp directory " << path << std::endl;
+        LOG(ERR) << "Failed to create temp directory " << path << std::endl;
         return "";
     }
     return path;
@@ -531,7 +535,7 @@ bool IO::ReadReferences(std::map<std::string, std::string>& ref_name_to_id_map, 
             }
             if (srm_id_list.size() != ref_name_to_id_list.size())
             {
-                gbl_warn << "reference files do not correspond - " << srm_ref_list_path << " is not the same length as " << ref_list_path << std::endl;
+                LOG(WARN) << "reference files do not correspond - " << srm_ref_list_path << " is not the same length as " << ref_list_path << std::endl;
             }
             else
             {
@@ -545,7 +549,7 @@ bool IO::ReadReferences(std::map<std::string, std::string>& ref_name_to_id_map, 
     }
     catch (std::exception& e)
     {
-        gbl_err << "Error while trying to read reference file \"" << ref_list_path << "\" - " << e.what() << std::endl;
+        LOG(ERR) << "Error while trying to read reference file \"" << ref_list_path << "\" - " << e.what() << std::endl;
         return false;
     }
     return true;
@@ -572,7 +576,7 @@ bool IO::FindLocalReferences(std::map<std::string, std::string>& ref_name_to_id_
     }
     catch (std::exception& e)
     {
-        gbl_err << "Error whilst attempting to aquire local references for file \"" << phyre_path << "\" - " << e.what() << std::endl;
+        LOG(ERR) << "Error whilst attempting to aquire local references for file \"" << phyre_path << "\" - " << e.what() << std::endl;
         return false;
     }
     if (ref_name_to_id_map.empty())
@@ -586,11 +590,18 @@ bool IO::EvaluateReferencesFromLocalSearch(std::map<std::string, std::string>& r
 {
     try
     {
-        std::vector<std::string> path_segs = Segment(phyre_path);
-        if (path_segs.empty()) return false;
-        path_segs.pop_back();
+        if (phyre_path.empty())
+        {
+            return false;
+        }
 
-        for (auto& seg : path_segs) seg = ToLower(seg);
+        if (!std::filesystem::exists(phyre_path))
+        {
+            LOG(ERR) << "Path \"" << phyre_path << "\" does not exist" << std::endl;
+            return false;
+        }
+
+        std::filesystem::path fs_phyre_path = std::filesystem::absolute(phyre_path);
 
         for (const auto& name_to_id : ref_name_to_id_map)
         {
@@ -599,15 +610,20 @@ bool IO::EvaluateReferencesFromLocalSearch(std::map<std::string, std::string>& r
             {
                 continue;
             }
+       
+            std::string filename = ToLower(BaseStem(name_to_id.second)) + "." + extension;
 
+            std::vector<std::string> ref_segs = Segment(name_to_id.second);
+            if (ref_segs.empty()) return false;
+            ref_segs.pop_back();
+
+            for (auto& seg : ref_segs) seg = ToLower(seg);
+
+            auto find_folder_name_matches = [&ref_segs, &filename, &ref_name_to_file_map, &name_to_id](const std::string& path)
             {
-                std::string filename = ToLower(BaseStem(name_to_id.second)) + "." + extension;
-
-                std::vector<std::string> ref_segs = Segment(name_to_id.second);
-                if (ref_segs.empty()) return false;
-                ref_segs.pop_back();
-
-                for (auto& seg : ref_segs) seg = ToLower(seg);
+                std::vector<std::string> path_segs = Segment(path);
+                
+                for (auto& seg : path_segs) seg = ToLower(seg);
 
                 for (size_t i = 0; i < ref_segs.size(); ++i)
                 {
@@ -623,15 +639,41 @@ bool IO::EvaluateReferencesFromLocalSearch(std::map<std::string, std::string>& r
                             if (std::filesystem::exists(candidate))
                             {
                                 ref_name_to_file_map[name_to_id.first] = candidate;
-                                goto label0;
-                                break;
+                                return true;
                             }
                         }
                     }
                 }
+
+                return false;
+            };
+
+            std::filesystem::path parent_path = fs_phyre_path.parent_path();
+            if (!parent_path.empty())
+            {
+                if (find_folder_name_matches(parent_path.string()))
+                {
+                    continue;
+                }
+
+                parent_path = parent_path.parent_path();
+                for (int itr_max = 3; itr_max > 0 && !parent_path.empty() && std::filesystem::exists(parent_path); --itr_max)
+                {
+                    for (const auto& entry : fs::directory_iterator(parent_path))
+                    {
+                        if (std::filesystem::is_regular_file(entry) || std::filesystem::is_directory(entry))
+                        {
+                            if (find_folder_name_matches(entry.path().string()))
+                            {
+                                goto label0;
+                            }
+                        }
+                    }
+                    parent_path = parent_path.parent_path();
+                }
             }
 
-            gbl_warn << "Failed to find local file to evaluate reference " << name_to_id.second << " near " << phyre_path << std::endl;
+            LOG(WARN) << "Failed to find local file to evaluate reference " << name_to_id.second << " near " << phyre_path << std::endl;
 
             label0:
             continue;
@@ -639,7 +681,7 @@ bool IO::EvaluateReferencesFromLocalSearch(std::map<std::string, std::string>& r
     }
     catch (std::exception& e)
     {
-        gbl_err << "Error whilst attempting to find and evaluate reference - " << e.what() << std::endl;
+        LOG(ERR) << "Error whilst attempting to find and evaluate reference - " << e.what() << std::endl;
         return false;
     }
     return true;

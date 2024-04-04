@@ -1217,47 +1217,48 @@ void FBXExporter::WriteObjects ()
 
         // colors, if any
         // TODO only one color channel currently
-        const int32_t colorChannelIndex = 0;
-        if (m->HasVertexColors(colorChannelIndex)) {
-            FBX::Node vertexcolors("LayerElementColor", int32_t(colorChannelIndex));
-            vertexcolors.Begin(outstream, binary, indent);
-            vertexcolors.DumpProperties(outstream, binary, indent);
-            vertexcolors.EndProperties(outstream, binary, indent);
-            vertexcolors.BeginChildren(outstream, binary, indent);
-            indent = 3;
-            FBX::Node::WritePropertyNode(
-                "Version", int32_t(101), outstream, binary, indent
-            );
-            char layerName[8];
-            snprintf(layerName, sizeof(layerName), "COLOR_%d", colorChannelIndex);
-            FBX::Node::WritePropertyNode(
-                "Name", (const char*)layerName, outstream, binary, indent
-            );
-            FBX::Node::WritePropertyNode(
-                "MappingInformationType", "ByPolygonVertex",
-                outstream, binary, indent
-            );
-            FBX::Node::WritePropertyNode(
-                "ReferenceInformationType", "Direct",
-                outstream, binary, indent
-            );
-            std::vector<double> color_data;
-            color_data.reserve(4 * polygon_data.size());
-            for (size_t fi = 0; fi < m->mNumFaces; ++fi) {
-                const aiFace &f = m->mFaces[fi];
-                for (size_t pvi = 0; pvi < f.mNumIndices; ++pvi) {
-                    const aiColor4D &c = m->mColors[colorChannelIndex][f.mIndices[pvi]];
-                    color_data.push_back(c.r);
-                    color_data.push_back(c.g);
-                    color_data.push_back(c.b);
-                    color_data.push_back(c.a);
-                }
-            }
-            FBX::Node::WritePropertyNode(
-                "Colors", color_data, outstream, binary, indent
-            );
-            indent = 2;
-            vertexcolors.End(outstream, binary, indent, true);
+        for (int32_t colorChannelIndex = 0; colorChannelIndex < (int32_t)m->GetNumColorChannels(); ++colorChannelIndex) {
+          if (m->HasVertexColors(colorChannelIndex)) {
+              FBX::Node vertexcolors("LayerElementColor", int32_t(colorChannelIndex));
+              vertexcolors.Begin(outstream, binary, indent);
+              vertexcolors.DumpProperties(outstream, binary, indent);
+              vertexcolors.EndProperties(outstream, binary, indent);
+              vertexcolors.BeginChildren(outstream, binary, indent);
+              indent = 3;
+              FBX::Node::WritePropertyNode(
+                  "Version", int32_t(101), outstream, binary, indent
+              );
+              char layerName[32];
+              snprintf(layerName, sizeof(layerName), "COLOR_%d", colorChannelIndex);
+              FBX::Node::WritePropertyNode(
+                  "Name", (const char*)layerName, outstream, binary, indent
+              );
+              FBX::Node::WritePropertyNode(
+                  "MappingInformationType", "ByPolygonVertex",
+                  outstream, binary, indent
+              );
+              FBX::Node::WritePropertyNode(
+                  "ReferenceInformationType", "Direct",
+                  outstream, binary, indent
+              );
+              std::vector<double> color_data;
+              color_data.reserve(4 * polygon_data.size());
+              for (size_t fi = 0; fi < m->mNumFaces; ++fi) {
+                  const aiFace &f = m->mFaces[fi];
+                  for (size_t pvi = 0; pvi < f.mNumIndices; ++pvi) {
+                      const aiColor4D &c = m->mColors[colorChannelIndex][f.mIndices[pvi]];
+                      color_data.push_back(c.r);
+                      color_data.push_back(c.g);
+                      color_data.push_back(c.b);
+                      color_data.push_back(c.a);
+                  }
+              }
+              FBX::Node::WritePropertyNode(
+                  "Colors", color_data, outstream, binary, indent
+              );
+              indent = 2;
+              vertexcolors.End(outstream, binary, indent, true);
+          }
         }
 
         // uvs, if any
@@ -1286,10 +1287,11 @@ void FBXExporter::WriteObjects ()
             FBX::Node::WritePropertyNode(
                 "Version", int32_t(101), outstream, binary, indent
             );
-            // it doesn't seem like assimp keeps the uv map name,
-            // so just leave it blank.
+
+            char layerName[32];
+            snprintf(layerName, sizeof(layerName), "UVMap%d", (int32_t)uvi);
             FBX::Node::WritePropertyNode(
-                "Name", "", outstream, binary, indent
+                "Name", (const char*)layerName, outstream, binary, indent
             );
             FBX::Node::WritePropertyNode(
                 "MappingInformationType", "ByPolygonVertex",
@@ -1367,6 +1369,16 @@ void FBXExporter::WriteObjects ()
         le.AddChild("TypedIndex", int32_t(0));
         layer.AddChild(le);
         layer.Dump(outstream, binary, indent);
+
+        for (unsigned int lr = 1; lr < m->GetNumColorChannels(); ++lr) {
+            FBX::Node layerExtra("Layer", int32_t(lr));
+            layerExtra.AddChild("Version", int32_t(100));
+            FBX::Node leExtra("LayerElement");
+            leExtra.AddChild("Type", "LayerElementColor");
+            leExtra.AddChild("TypedIndex", int32_t(lr));
+            layerExtra.AddChild(leExtra);
+            layerExtra.Dump(outstream, binary, indent);
+        }
 
         for(unsigned int lr = 1; lr < m->GetNumUVChannels(); ++ lr)
         {
@@ -1750,7 +1762,7 @@ void FBXExporter::WriteObjects ()
         int64_t blendshape_uid = generate_uid();
         mesh_uids.push_back(blendshape_uid);
         bsnode.AddProperty(blendshape_uid);
-        bsnode.AddProperty(blendshape_name + FBX::SEPARATOR + "Blendshape");
+        bsnode.AddProperty(blendshape_name + FBX::SEPARATOR + "Geometry");
         bsnode.AddProperty("Shape");
         bsnode.AddChild("Version", int32_t(100));
         bsnode.Begin(outstream, binary, indent);
@@ -1765,18 +1777,17 @@ void FBXExporter::WriteObjects ()
 
           for (unsigned int vt = 0; vt < vertex_indices.size(); ++vt) {
               aiVector3D pDiff = (pAnimMesh->mVertices[vertex_indices[vt]] - m->mVertices[vertex_indices[vt]]);
-              if(pDiff.Length()>1e-8){
-                shape_indices.push_back(vertex_indices[vt]);
-                pPositionDiff.push_back(pDiff[0]);
-                pPositionDiff.push_back(pDiff[1]);
-                pPositionDiff.push_back(pDiff[2]);
+              
+              shape_indices.push_back(vertex_indices[vt]);
+              pPositionDiff.push_back(pDiff[0]);
+              pPositionDiff.push_back(pDiff[1]);
+              pPositionDiff.push_back(pDiff[2]);
 
-                if (pAnimMesh->HasNormals()) {
-                    aiVector3D nDiff = (pAnimMesh->mNormals[vertex_indices[vt]] - m->mNormals[vertex_indices[vt]]);
-                    pNormalDiff.push_back(nDiff[0]);
-                    pNormalDiff.push_back(nDiff[1]);
-                    pNormalDiff.push_back(nDiff[2]);
-                }
+              if (pAnimMesh->HasNormals()) {
+                  aiVector3D nDiff = (pAnimMesh->mNormals[vertex_indices[vt]] - m->mNormals[vertex_indices[vt]]);
+                  pNormalDiff.push_back(nDiff[0]);
+                  pNormalDiff.push_back(nDiff[1]);
+                  pNormalDiff.push_back(nDiff[2]);
               }
           }
 

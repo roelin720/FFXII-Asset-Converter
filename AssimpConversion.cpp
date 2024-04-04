@@ -1,6 +1,7 @@
 #include "AssimpConversion.h"
 #include "ConverterInterface.h"
 #include "../code/PostProcessing/CalcTangentsProcess.h"
+#include "../code/PostProcessing/GenVertexNormalsProcess.h"
 
 using namespace AssimpConversion;
 
@@ -74,6 +75,31 @@ namespace
             aNode_map[aNode.mChildren[i]->mName.C_Str()] = aNode.mChildren[i];
             gather_nodes(aNode_map, *aNode.mChildren[i]);
         }
+    }
+
+    int extract_last_num(const std::string& input) 
+    {
+        int last_num = 0, cur_num = 0;
+        bool in_num = false;
+
+        for (char c : input)
+        {
+            if (std::isdigit(c)) 
+            {
+                cur_num = cur_num * 10 + (c - '0');
+                in_num = true;
+            }
+            else if (in_num) 
+            {
+                last_num = cur_num;
+                cur_num = 0;
+                in_num = false;
+            }
+        }
+        if (in_num) {
+            last_num = cur_num;
+        }
+        return last_num;
     }
 
     class TangentProcessor : Assimp::CalcTangentsProcess
@@ -217,11 +243,7 @@ bool AssimpConversion::ConvertToAssimpScene(aiScene& aScene, const Scene& scene)
         aScene.mNumMeshes = scene.submeshes.size() + additional_meshes.size();
         aScene.mMeshes = new aiMesh * [aScene.mNumMeshes];
         memset(aScene.mMeshes, 0, size_t(aScene.mNumMeshes) * 8);
-
-        for (uint64_t i = 0; i < additional_meshes.size(); ++i)
-        {
-            aScene.mMeshes[scene.submeshes.size() + i] = additional_meshes[i];
-        }
+        memcpy(&aScene.mMeshes[scene.submeshes.size()], additional_meshes.data(), 8ull * additional_meshes.size());
 
         for (int64_t i = 0; i < scene.submeshes.size(); ++i)
         {
@@ -243,10 +265,20 @@ bool AssimpConversion::ConvertToAssimpScene(aiScene& aScene, const Scene& scene)
 
             aScene.mMeshes[i]->mNumVertices = scene.submeshes[i].components.begin()->second[0]->elem_count;
 
-            if (auto pos_comps = find_either_vcomps(scene.submeshes[i], VertexComponentType::Vertex, VertexComponentType::SkinnableVertex))
+            auto uv_comps = find_vcomps(scene.submeshes[i], VertexComponentType::ST);
+            auto pos_comps = find_either_vcomps(scene.submeshes[i], VertexComponentType::Vertex, VertexComponentType::SkinnableVertex);
+            auto normal_comps = find_either_vcomps(scene.submeshes[i], VertexComponentType::Normal, VertexComponentType::SkinnableNormal);
+            auto tangent_comps = find_either_vcomps(scene.submeshes[i], VertexComponentType::Tangent, VertexComponentType::SkinnableTangent);
+            auto bitangent_comps = find_either_vcomps(scene.submeshes[i], VertexComponentType::Binormal, VertexComponentType::SkinnableBinormal);
+            auto colour_comps = find_vcomps(scene.submeshes[i], VertexComponentType::Color);
+            auto bone_weight_comps = find_vcomps(scene.submeshes[i], VertexComponentType::SkinWeights);
+            auto bone_index_comps = find_vcomps(scene.submeshes[i], VertexComponentType::SkinIndices);
+
+            if (pos_comps)
             {
                 CONVASSERT(pos_comps->size() == 1);
                 CONVASSERT(pos_comps->at(0)->elem_size == 12);
+                CONVASSERT(pos_comps->at(0)->vertex_stream_count == 1);
 
                 aScene.mMeshes[i]->mNumVertices = (uint32_t)aScene.mMeshes[i]->mNumVertices;
                 aScene.mMeshes[i]->mVertices = new aiVector3D[aScene.mMeshes[i]->mNumVertices];
@@ -254,28 +286,140 @@ bool AssimpConversion::ConvertToAssimpScene(aiScene& aScene, const Scene& scene)
             }
             else
             {
-                gbl_err << "Position vertex componenet not present in submesh " + std::to_string(i) << std::endl;
+                LOG(ERR) << "Position vertex componenet not present in submesh " + std::to_string(i) << std::endl;
                 return false;
             }
-
-            if (auto normal_comps = find_either_vcomps(scene.submeshes[i], VertexComponentType::Normal, VertexComponentType::SkinnableNormal))
+            
+            if (scene.submeshes[i].has_mesh_keys_in_UVs)
             {
+                uint32_t vertex_stream_count = uv_comps->at(1)->vertex_stream_count;
+
+                for (uint32_t j = 1; j < uv_comps->size(); ++j)
+                {
+                    if (aScene.mMeshes[i]->mNumVertices == 0 || uv_comps->at(j)->elem_count % aScene.mMeshes[i]->mNumVertices != 0)
+                    {
+                        LOG(ERR) << "Submesh " << scene.submeshes[i].name << "'s mesh key's vertex count in vertex stream in UVs is not a multiple of the number of vertices, expected n * " << aScene.mMeshes[i]->mNumVertices << " but contains " << uv_comps->at(j)->elem_count << " at uv " << j << std::endl;
+                        return false;
+                    }
+
+                    if (aScene.mMeshes[i]->mNumVertices == 0 || uv_comps->at(j)->elem_count / aScene.mMeshes[i]->mNumVertices != vertex_stream_count)
+                    {
+                        LOG(ERR) << "Submesh " << scene.submeshes[i].name << "'s mesh key's vertex count in vertex stream in UVs is not a multiple of the number of vertices, expected " << vertex_stream_count << " * " << aScene.mMeshes[i]->mNumVertices << " but contains " << uv_comps->at(j)->elem_count << " at uv " << j << std::endl;
+                        return false;
+                    }
+
+                    if (uv_comps->at(j)->vertex_stream_count != vertex_stream_count)
+                    {
+                        LOG(ERR) << "Submesh " << scene.submeshes[i].name << "'s mesh key doesn't not have the correct number of vertex streams, expected " << vertex_stream_count << " but contains " << uv_comps->at(j)->vertex_stream_count << " at uv " << j << std::endl;
+                        return false;
+                    }
+                }
+
+                CONVASSERT(tangent_comps->size() == bitangent_comps->size() && tangent_comps->size() > 1);
+
+                uint32_t anim_comp_count = uint32_t((uv_comps->size() - 1) / 2);
+                aScene.mMeshes[i]->mNumAnimMeshes = vertex_stream_count * anim_comp_count /* + tangent_comps->size() - 1 + bitangent_comps->size() - 1*/;
+                aScene.mMeshes[i]->mAnimMeshes = new aiAnimMesh * [aScene.mMeshes[i]->mNumAnimMeshes];
+                aScene.mMeshes[i]->mMethod = aiMorphingMethod_VERTEX_BLEND;
+                memset(aScene.mMeshes[i]->mAnimMeshes, 0, aScene.mMeshes[i]->mNumAnimMeshes * 8ull);
+
+                for (uint32_t vs = 0; vs < vertex_stream_count; ++vs)
+                {
+                    for (uint32_t j = 0; j < anim_comp_count; ++j)
+                    {
+                        uint32_t vcomp_index = 1 + j * 2;
+                        uint32_t anim_index = j + vs * anim_comp_count;
+                        glm::vec2* uv_sets[2] = { (glm::vec2*)uv_comps->at(vcomp_index)->data.data(), (glm::vec2*)uv_comps->at(vcomp_index + 1)->data.data() };
+                        
+                        CONVASSERT(normal_comps != nullptr);
+
+                        aScene.mMeshes[i]->mAnimMeshes[anim_index] = new aiAnimMesh();
+                        aScene.mMeshes[i]->mAnimMeshes[anim_index]->mNumVertices = aScene.mMeshes[i]->mNumVertices;
+                        aScene.mMeshes[i]->mAnimMeshes[anim_index]->mName = "AnimKey" + std::to_string(anim_index);
+                                                      
+                        aScene.mMeshes[i]->mAnimMeshes[anim_index]->mVertices = new aiVector3D[aScene.mMeshes[i]->mNumVertices];
+                        aScene.mMeshes[i]->mAnimMeshes[anim_index]->mNormals = new aiVector3D[aScene.mMeshes[i]->mNumVertices];  //assimp needs this to import back. Not sure if new ones should be generated, but none exist in the original scene
+                        
+                        for (uint32_t k = 0; k < aScene.mMeshes[i]->mNumVertices; ++k)
+                        {
+                            uint32_t uv_index = k + vs * aScene.mMeshes[i]->mNumVertices;
+                            aScene.mMeshes[i]->mAnimMeshes[anim_index]->mVertices[k] = aiVector3D(uv_sets[0][uv_index].x, uv_sets[0][uv_index].y, uv_sets[1][uv_index].x);
+                            aScene.mMeshes[i]->mAnimMeshes[anim_index]->mNormals[k] = ((aiVector3D*)normal_comps->at(0)->data.data())[k];
+                        }
+                    }
+                }
+
+                /*
+                ** the following code exists to store the extra tangents and bitangets that come with anim meshes
+                ** but these values don't seem to actually be used in-game so they're being ommited
+                ** this is because the main normals, tangents and bitangents all contain the same values, which cannot be correct
+                */
+                //auto assign_unknown_meshes = [&aScene, &normal_comps, &bitangent_comps, &tangent_comps, i](decltype(tangent_comps)& comps, std::string type, size_t mesh_offset)
+                //{
+                //    for (uint32_t t = 1; t < comps->size(); ++t)
+                //    {
+                //        uint32_t anim_index = (t - 1) + mesh_offset;
+                //        aScene.mMeshes[i]->mAnimMeshes[anim_index] = new aiAnimMesh();
+                //        aScene.mMeshes[i]->mAnimMeshes[anim_index]->mNumVertices = aScene.mMeshes[i]->mNumVertices;
+                //        aScene.mMeshes[i]->mAnimMeshes[anim_index]->mName = type + "Key" + std::to_string(t - 1);
+                //
+                //        aScene.mMeshes[i]->mAnimMeshes[anim_index]->mVertices = new aiVector3D[aScene.mMeshes[i]->mNumVertices];
+                //        aScene.mMeshes[i]->mAnimMeshes[anim_index]->mNormals = new aiVector3D[aScene.mMeshes[i]->mNumVertices];
+                //
+                //        for (uint32_t k = 0; k < aScene.mMeshes[i]->mNumVertices; ++k)
+                //        {
+                //            if (k == 0)
+                //            {
+                //                std::cout << t << std::endl;
+                //                std::cout << (glm::vec3&)((((glm::vec3*)comps->at(t)->data.data())[k])) << std::endl;;
+                //                std::cout << ((glm::vec3*)normal_comps->at(0)->data.data())[k] << std::endl;;
+                //                std::cout << ((glm::vec3*)tangent_comps->at(0)->data.data())[k] << std::endl;;
+                //                std::cout << ((glm::vec3*)bitangent_comps->at(0)->data.data())[k] << std::endl;;
+                //            }
+                //
+                //            aScene.mMeshes[i]->mAnimMeshes[anim_index]->mVertices[k] = (aiVector3D&)((((glm::vec3*)comps->at(t)->data.data())[k]));
+                //            aScene.mMeshes[i]->mAnimMeshes[anim_index]->mNormals[k] = ((aiVector3D*)normal_comps->at(0)->data.data())[k];
+                //        }
+                //    }
+                //};
+                //assign_unknown_meshes(tangent_comps, "UnknownT", vertex_stream_count * anim_comp_count);
+                //assign_unknown_meshes(bitangent_comps, "UnknownB", vertex_stream_count * anim_comp_count + tangent_comps->size() - 1);
+            }
+
+            if (scene.submeshes[i].has_colours_in_UVs)
+            {
+                aScene.mMeshes[i]->mColors[0] = new aiColor4D[aScene.mMeshes[i]->mNumVertices];
+
+                glm::vec2* uv_sets[2] = { (glm::vec2*)uv_comps->at(1)->data.data(), (glm::vec2*)uv_comps->at(2)->data.data() };
+
+                for (uint32_t k = 0; k < aScene.mMeshes[i]->mNumVertices; ++k)
+                {
+                    aScene.mMeshes[i]->mColors[0][k] = aiColor4D(uv_sets[0][k].x, uv_sets[0][k].y, uv_sets[1][k].x, uv_sets[1][k].y);
+                }
+            }
+
+            if (normal_comps)
+            {
+                CONVASSERT(normal_comps->size() == 1);
                 CONVASSERT(normal_comps->at(0)->elem_size == 12);
+                CONVASSERT(normal_comps->at(0)->vertex_stream_count == 1);
 
                 aScene.mMeshes[i]->mNormals = new aiVector3D[aScene.mMeshes[i]->mNumVertices];
                 memcpy(aScene.mMeshes[i]->mNormals, normal_comps->at(0)->data.data(), normal_comps->at(0)->data.size());
             }
-            ;
-            if (auto uv_comps = find_vcomps(scene.submeshes[i], VertexComponentType::ST))
+            
+            if (uv_comps)
             {
                 CONVASSERT(uv_comps->size() <= AI_MAX_NUMBER_OF_TEXTURECOORDS);
 
                 aScene.mMeshes[i]->mTextureCoordsNames = new aiString * [AI_MAX_NUMBER_OF_TEXTURECOORDS];
                 memset(aScene.mMeshes[i]->mTextureCoordsNames, 0, AI_MAX_NUMBER_OF_TEXTURECOORDS * 8ull);
 
-                for (int32_t k = 0; k < uv_comps->size(); ++k)
+                uint32_t uv_comp_count = scene.submeshes[i].has_mesh_keys_in_UVs || scene.submeshes[i].has_colours_in_UVs ? 1 : uv_comps->size();
+                for (int32_t k = 0; k < uv_comp_count; ++k)
                 {
                     CONVASSERT(uv_comps->at(k)->elem_size == 8);
+                    CONVASSERT(uv_comps->at(k)->vertex_stream_count == 1);
 
                     aScene.mMeshes[i]->mTextureCoordsNames[k] = new aiString(("UV" + std::to_string(i)).c_str());
                     aScene.mMeshes[i]->mTextureCoords[k] = new aiVector3D[aScene.mMeshes[i]->mNumVertices];
@@ -289,32 +433,36 @@ bool AssimpConversion::ConvertToAssimpScene(aiScene& aScene, const Scene& scene)
                 }
             }
 
-            if (auto tangent_comps = find_either_vcomps(scene.submeshes[i], VertexComponentType::Tangent, VertexComponentType::SkinnableTangent))
+            if (tangent_comps)
             {
                 CONVASSERT(tangent_comps->at(0)->elem_size == 12);
+                CONVASSERT(tangent_comps->at(0)->vertex_stream_count == 1);
 
                 aScene.mMeshes[i]->mTangents = new aiVector3D[aScene.mMeshes[i]->mNumVertices];
                 memcpy(aScene.mMeshes[i]->mTangents, tangent_comps->at(0)->data.data(), tangent_comps->at(0)->data.size());
             }
 
-            if (auto bitangent_comps = find_either_vcomps(scene.submeshes[i], VertexComponentType::Binormal, VertexComponentType::SkinnableBinormal))
+            if (bitangent_comps)
             {
                 CONVASSERT(bitangent_comps->at(0)->elem_size == 12);
+                CONVASSERT(bitangent_comps->at(0)->vertex_stream_count == 1);
 
                 aScene.mMeshes[i]->mBitangents = new aiVector3D[aScene.mMeshes[i]->mNumVertices];
                 memcpy(aScene.mMeshes[i]->mBitangents, bitangent_comps->at(0)->data.data(), bitangent_comps->at(0)->data.size());
             }
 
-            if (auto colour_comps = find_vcomps(scene.submeshes[i], VertexComponentType::Color))
+            if (colour_comps)
             {
-                CONVASSERT(colour_comps->size() <= AI_MAX_NUMBER_OF_COLOR_SETS);
+                CONVASSERT(colour_comps->size() + scene.submeshes[i].has_colours_in_UVs <= AI_MAX_NUMBER_OF_COLOR_SETS);
 
                 for (int32_t k = 0; k < colour_comps->size(); ++k)
                 {
                     CONVASSERT(colour_comps->at(k)->elem_size == 16);
+                    CONVASSERT(colour_comps->at(k)->vertex_stream_count == 1);
 
-                    aScene.mMeshes[i]->mColors[k] = new aiColor4D[aScene.mMeshes[i]->mNumVertices];
-                    memcpy(aScene.mMeshes[i]->mColors[k], colour_comps->at(0)->data.data(), colour_comps->at(0)->data.size());
+                    int32_t colour_set_index = scene.submeshes[i].has_colours_in_UVs ? k + 1 : k;
+                    aScene.mMeshes[i]->mColors[colour_set_index] = new aiColor4D[aScene.mMeshes[i]->mNumVertices];
+                    memcpy(aScene.mMeshes[i]->mColors[colour_set_index], colour_comps->at(k)->data.data(), colour_comps->at(k)->data.size());
                 }
             }
 
@@ -324,20 +472,22 @@ bool AssimpConversion::ConvertToAssimpScene(aiScene& aScene, const Scene& scene)
                 std::vector<glm::u8vec4> bone_id_arr(aScene.mMeshes[i]->mNumVertices);
                 std::vector<std::vector<aiVertexWeight>> aibone_weight_arr(scene.submeshes[i].bones.size());
 
-                if (auto weight_comps = find_vcomps(scene.submeshes[i], VertexComponentType::SkinWeights))
+                if (bone_weight_comps)
                 {
-                    CONVASSERT(weight_comps->size() == 1);
-                    CONVASSERT(weight_comps->at(0)->elem_size == 16);
+                    CONVASSERT(bone_weight_comps->size() == 1);
+                    CONVASSERT(bone_weight_comps->at(0)->elem_size == 16);
+                    CONVASSERT(bone_weight_comps->at(0)->vertex_stream_count == 1);
 
-                    memcpy(bone_weight_arr.data(), weight_comps->at(0)->data.data(), weight_comps->at(0)->data.size());
+                    memcpy(bone_weight_arr.data(), bone_weight_comps->at(0)->data.data(), bone_weight_comps->at(0)->data.size());
                 }
 
-                if (auto id_comps = find_vcomps(scene.submeshes[i], VertexComponentType::SkinIndices))
+                if (bone_index_comps)
                 {
-                    CONVASSERT(id_comps->size() == 1);
-                    CONVASSERT(id_comps->at(0)->elem_size == 4);
+                    CONVASSERT(bone_index_comps->size() == 1);
+                    CONVASSERT(bone_index_comps->at(0)->elem_size == 4);
+                    CONVASSERT(bone_index_comps->at(0)->vertex_stream_count == 1);
 
-                    memcpy(bone_id_arr.data(), id_comps->at(0)->data.data(), id_comps->at(0)->data.size());
+                    memcpy(bone_id_arr.data(), bone_index_comps->at(0)->data.data(), bone_index_comps->at(0)->data.size());
                 }
 
                 for (uint32_t j = 0; j < aScene.mMeshes[i]->mNumVertices; ++j)
@@ -370,7 +520,7 @@ bool AssimpConversion::ConvertToAssimpScene(aiScene& aScene, const Scene& scene)
     }
     catch (const std::exception& e)
     {
-        gbl_err << "Failed to convert scene to assimp scene - " << e.what() << std::endl;
+        LOG(ERR) << "Failed to convert scene to assimp scene - " << e.what() << std::endl;
         return false;
     }
     return true;
@@ -409,7 +559,7 @@ bool AssimpConversion::ConvertFromAssimpScene(const aiScene& aScene, Scene& scen
                     {
                         if (it->second->mNumMeshes > 1)
                         {
-                            gbl_warn << "submesh node " << submesh_node_name << " has more than one mesh. The rest will be discarded" << std::endl;
+                            LOG(WARN) << "submesh node " << submesh_node_name << " has more than one mesh. The rest will be discarded" << std::endl;
                         }
 
                         aSubmesh = aScene.mMeshes[it->second->mMeshes[0]];
@@ -433,14 +583,14 @@ bool AssimpConversion::ConvertFromAssimpScene(const aiScene& aScene, Scene& scen
                 submesh->clear();
                 continue;
             }
-    
+
             submesh->indices.resize(size_t(aSubmesh->mNumFaces) * 3);
 
             for (size_t j = 0; j < aSubmesh->mNumFaces; ++j)
             {
                 if (aSubmesh->mFaces[j].mNumIndices != 3)
                 {
-                    gbl_err << "Non triangle face detected on submesh " << submesh->name <<  std::endl;
+                    LOG(ERR) << "Non-triangle face detected on submesh " << submesh->name <<  std::endl;
                     continue;
                 }
                 submesh->indices[j * 3 + 0] = aSubmesh->mFaces[j].mIndices[0];
@@ -448,14 +598,9 @@ bool AssimpConversion::ConvertFromAssimpScene(const aiScene& aScene, Scene& scen
                 submesh->indices[j * 3 + 2] = aSubmesh->mFaces[j].mIndices[2];
             }
 
-            if (aSubmesh->mNumFaces & 1)
-            {
-                submesh->indices.push_back(0);
-            }
-
             if (submesh->bones.empty() && aSubmesh->HasBones())
             {
-                gbl_err << "submesh " << submesh->name << " shouldn't reference bones, but does" << std::endl;
+                LOG(ERR) << "submesh " << submesh->name << " shouldn't reference bones, but does" << std::endl;
                 return false;
             }
 
@@ -469,13 +614,14 @@ bool AssimpConversion::ConvertFromAssimpScene(const aiScene& aScene, Scene& scen
                     std::string bone_name = aBone->mName.C_Str();
 
                     auto it = std::find_if(submesh->mesh->skeleton.begin(), submesh->mesh->skeleton.end(),
-                    [bone_name](const Bone& bone) { 
+                    [bone_name](const Bone& bone) 
+                    { 
                         return bone.node->name == bone_name; 
                     });
 
                     if (it == submesh->mesh->skeleton.end())
                     {
-                        gbl_err << "Failed to find bone '" << bone_name << "' in skeleton '" << submesh->mesh->skeleton[0].node->name << "' of submesh '" << submesh->name << "' " << std::endl;
+                        LOG(ERR) << "Failed to find bone '" << bone_name << "' in skeleton '" << submesh->mesh->skeleton[0].node->name << "' of submesh '" << submesh->name << "' " << std::endl;
                         return false;
                     }
                     else submesh->bones[j] = &*it;
@@ -484,7 +630,7 @@ bool AssimpConversion::ConvertFromAssimpScene(const aiScene& aScene, Scene& scen
 
                     if (submesh->mesh->global_to_local_bone_ID.find(bone_global_ID) == submesh->mesh->global_to_local_bone_ID.end())
                     {
-                        gbl_err << "Bone '" << bone_name << "' is not a usable bone in skeleton '" << submesh->mesh->skeleton[0].node->name << "' of submesh '" << submesh->name << "' " << std::endl;
+                        LOG(ERR) << "Bone '" << bone_name << "' is not a usable bone in skeleton '" << submesh->mesh->skeleton[0].node->name << "' of submesh '" << submesh->name << "' " << std::endl;
                         return false;
                     }
                 }
@@ -502,6 +648,7 @@ bool AssimpConversion::ConvertFromAssimpScene(const aiScene& aScene, Scene& scen
             auto bone_weight_comps = find_vcomps(*submesh, VertexComponentType::SkinWeights);
             auto bone_index_comps = find_vcomps(*submesh, VertexComponentType::SkinIndices);
 
+            CONVASSERT(pos_comps && pos_comps->size() == 1);
             CONVASSERT(normal_comps || (!tangent_comps && !bitangent_comps));
             CONVASSERT(aSubmesh->HasNormals() || !aSubmesh->HasTangentsAndBitangents());
 
@@ -531,83 +678,238 @@ bool AssimpConversion::ConvertFromAssimpScene(const aiScene& aScene, Scene& scen
                 bitangent_comps->at(0)->elem_count = aSubmesh->mNumVertices;
                 memcpy(bitangent_comps->at(0)->data.data(), aSubmesh->mBitangents, bitangent_comps->at(0)->data.size());
             }
+
             if (colour_comps)
-            {        
+            {
                 size_t aColour_count = aSubmesh->GetNumColorChannels();
-                if (aColour_count != colour_comps->size())
+                size_t expected_colour_count = colour_comps->size() + submesh->has_colours_in_UVs;
+                if (aColour_count != expected_colour_count)
                 {
-                    gbl_err << "submesh " << submesh->name << " doesn't have the correct number of colour channels (expected " << colour_comps->size() << " but contains " << aColour_count << ")" << std::endl;
+                    LOG(ERR) << "submesh " << submesh->name << " doesn't have the correct number of colour channels (expected " << expected_colour_count << " but contains " << aColour_count << ")" << std::endl;
                     return false;
                 }
 
                 for (int32_t j = 0; j < colour_comps->size(); ++j)
                 {
-                    colour_comps->at(j)->data.resize(sizeof(glm::vec4) * aSubmesh->mNumVertices);
+                    int32_t colour_set_index = submesh->has_colours_in_UVs ? j + 1 : j;
+                    colour_comps->at(j)->data.resize(sizeof(glm::vec4)* aSubmesh->mNumVertices);
                     colour_comps->at(j)->elem_count = aSubmesh->mNumVertices;
-                    memcpy(colour_comps->at(0)->data.data(), aSubmesh->mColors[j], colour_comps->at(0)->data.size());
+                    memcpy(colour_comps->at(j)->data.data(), aSubmesh->mColors[colour_set_index], colour_comps->at(j)->data.size());
                 }
             }
+
+            if (submesh->has_mesh_keys_in_UVs)
+            {
+                uint32_t vertex_stream_count = uv_comps->at(1)->vertex_stream_count;
+                uint32_t anim_comp_count = (uv_comps->size() - 1) / 2;
+                size_t expected_anim_mesh_count = vertex_stream_count * anim_comp_count /* + tangent_comps->size() - 1 + bitangent_comps->size() - 1 */;
+                if (aSubmesh->mNumAnimMeshes != expected_anim_mesh_count)
+                {
+                    LOG(ERR) << "Expected " << expected_anim_mesh_count << " morph/shape keys from submesh " << submesh->name << " but got " << aSubmesh->mNumAnimMeshes << std::endl;
+                    return false;
+                }
+            }
+
             if (uv_comps)
             {
                 size_t aUV_count = aSubmesh->GetNumUVChannels();
-                if (aUV_count != uv_comps->size())
+                size_t expected_UV_count = submesh->has_mesh_keys_in_UVs || submesh->has_colours_in_UVs ? 1 : uv_comps->size();
+                if (aUV_count != expected_UV_count)
                 {
-                    gbl_err << "submesh " << submesh->name << " doesn't have the correct number of UV channels (expected " << uv_comps->size() << " but contains " << aUV_count << ")" << std::endl;
+                    LOG(ERR) << "submesh " << submesh->name << " doesn't have the correct number of UV channels (expected " << expected_UV_count << " but contains " << aUV_count << ")" << std::endl;
                     return false;
                 }
-                CONVASSERT(tbn_comp_count == aUV_count);
 
                 for (int32_t j = 0; j < uv_comps->size(); ++j)
                 {
-                    uv_comps->at(j)->data.resize(sizeof(glm::vec2) * aSubmesh->mNumVertices);
-                    uv_comps->at(j)->elem_count = aSubmesh->mNumVertices;
-                    glm::vec2* uvs = (glm::vec2*)uv_comps->at(j)->data.data();
-
-                    for (int32_t k = 0; k < aSubmesh->mNumVertices; ++k)
+                    if ((j == 0 || (!submesh->has_mesh_keys_in_UVs && !submesh->has_colours_in_UVs)))
                     {
-                        uvs[k] = glm::vec2(aSubmesh->mTextureCoords[j][k][0], 1.0f - aSubmesh->mTextureCoords[j][k][1]);
+                        uv_comps->at(j)->data.resize(sizeof(glm::vec2) * aSubmesh->mNumVertices);
+                        uv_comps->at(j)->elem_count = aSubmesh->mNumVertices;
+
+                        glm::vec2* uv_data = (glm::vec2*)uv_comps->at(j)->data.data();
+
+                        for (int32_t k = 0; k < aSubmesh->mNumVertices; ++k)
+                        {
+                            uv_data[k] = glm::vec2(aSubmesh->mTextureCoords[j][k][0], 1.0f - aSubmesh->mTextureCoords[j][k][1]);
+                        }
                     }
 
-                    if (j > 0 && normal_comps) //the first TBN have already been calculated by assimp
+                    if (j > 0)
                     {
-                        TangentProcessor tangent_processor;
-                        aiMesh tp_submesh;
-                        memcpy(&tp_submesh, aSubmesh, sizeof(aiMesh));
+                        if (submesh->has_colours_in_UVs && (j & 1) == 1)
+                        {
+                            uv_comps->at(j)->data.resize(sizeof(glm::vec2) * aSubmesh->mNumVertices);
+                            uv_comps->at(j)->elem_count = aSubmesh->mNumVertices;
+                            uv_comps->at(j + size_t(1))->data.resize(sizeof(glm::vec2) * aSubmesh->mNumVertices);
+                            uv_comps->at(j + size_t(1))->elem_count = aSubmesh->mNumVertices;
+                            glm::vec2* uv_data0 = (glm::vec2*)uv_comps->at(j)->data.data();
+                            glm::vec2* uv_data1 = (glm::vec2*)uv_comps->at(j + size_t(1))->data.data();
 
-                        tp_submesh.mTangents = nullptr;
-                        tp_submesh.mBitangents = nullptr;
-                        std::swap(tp_submesh.mTextureCoords[0], tp_submesh.mTextureCoords[j]);
+                            for (int32_t l = 0; l < aSubmesh->mNumVertices; ++l)
+                            {
+                                aiColor4D& colour = aSubmesh->mColors[0][l];
+                                uv_data0[l] = glm::vec2(colour[0], colour[1]);
+                                uv_data1[l] = glm::vec2(colour[2], colour[3]);
+                            }
+                        }
+                        else if (submesh->has_mesh_keys_in_UVs && (j & 1) == 1)
+                        {
+                            uint32_t vertex_stream_count = uv_comps->at(j)->vertex_stream_count;
+                            uint32_t anim_comp_count = (uv_comps->size() - 1) / 2;
 
-                        if (!tangent_processor.process(&tp_submesh))
-                        {
-                            gbl_err << "Failed to calculate tangents/bitangets " << j << " for " << submesh->name << std::endl;
-                            return false;
-                        }
-                        if (j < normal_comps->size())
-                        {
-                            normal_comps->at(j)->data.resize(sizeof(glm::vec3)* aSubmesh->mNumVertices);
-                            normal_comps->at(j)->elem_count = aSubmesh->mNumVertices;
-                            memcpy(normal_comps->at(j)->data.data(), tp_submesh.mNormals, normal_comps->at(j)->data.size());
-                        }
-                        if (j < tangent_comps->size())
-                        {
-                            tangent_comps->at(j)->data.resize(sizeof(glm::vec3) * aSubmesh->mNumVertices);
-                            tangent_comps->at(j)->elem_count = aSubmesh->mNumVertices;
-                            memcpy(tangent_comps->at(j)->data.data(), tp_submesh.mTangents, tangent_comps->at(j)->data.size());
-                        }
-                        if (j < bitangent_comps->size())
-                        {
-                            bitangent_comps->at(j)->data.resize(sizeof(glm::vec3) * aSubmesh->mNumVertices);
-                            bitangent_comps->at(j)->elem_count = aSubmesh->mNumVertices;
-                            memcpy(bitangent_comps->at(j)->data.data(), tp_submesh.mBitangents, bitangent_comps->at(j)->data.size());
-                        }
-                        delete[] tp_submesh.mTangents;
-                        delete[] tp_submesh.mBitangents;
+                            uv_comps->at(j)->data.resize(sizeof(glm::vec2) * aSubmesh->mNumVertices * vertex_stream_count);
+                            uv_comps->at(j)->elem_count = aSubmesh->mNumVertices * vertex_stream_count;
+                            uv_comps->at(j + size_t(1))->data.resize(sizeof(glm::vec2) * aSubmesh->mNumVertices * vertex_stream_count);
+                            uv_comps->at(j + size_t(1))->elem_count = aSubmesh->mNumVertices * vertex_stream_count;
+                            glm::vec2* uv_data0 = (glm::vec2*)uv_comps->at(j)->data.data();
+                            glm::vec2* uv_data1 = (glm::vec2*)uv_comps->at(j + size_t(1))->data.data();
 
-                        memset(&tp_submesh, 0, sizeof(aiMesh)); //prevent pointer destruction
-                    }
+                            auto mesh_begin = aSubmesh->mAnimMeshes, mesh_end = aSubmesh->mAnimMeshes + aSubmesh->mNumAnimMeshes;
+                            auto initialise_mesh_list = [&aSubmesh, &submesh](std::vector<aiAnimMesh*>& list, const std::string& type, size_t expected_elem_count)
+                            {
+                                auto mesh_begin = aSubmesh->mAnimMeshes, mesh_end = aSubmesh->mAnimMeshes + aSubmesh->mNumAnimMeshes;
+                                std::copy_if(mesh_begin, mesh_end, std::back_inserter(list), [&type](const aiAnimMesh* m) { return std::string(m->mName.C_Str()).contains(type); });
+                                std::sort(list.begin(), list.end(), [](auto a, auto b) { return extract_last_num(a->mName.C_Str()) < extract_last_num(b->mName.C_Str()); });
+                                if (list.size() != expected_elem_count)
+                                {
+                                    LOG(ERR) << "submesh " << submesh->name << " doesn't have the correct number of shape keys of type " << type << " (expected " << expected_elem_count << " but contains " << list.size() << ")" << std::endl;
+                                    return false;
+                                }
+                                return true;
+                            };
+
+                            std::vector<aiAnimMesh*> anim_meshes;
+                            //std::vector<aiAnimMesh*> tangent_meshes;
+                            //std::vector<aiAnimMesh*> bitangent_meshes;
+                            if (!initialise_mesh_list(anim_meshes, "Anim", anim_comp_count * vertex_stream_count)
+                            //    || !initialise_mesh_list(tangent_meshes, "UnknownT", tangent_comps->size() - 1)
+                            //    || !initialise_mesh_list(bitangent_meshes, "UnknownB", bitangent_comps->size() - 1
+                            ) {
+                                return false;
+                            }
+
+                            for (int64_t vs = 0; vs < vertex_stream_count; ++vs)
+                            {
+                                uint32_t anim_index = ((j - 1) / 2) + vs * anim_comp_count;
+
+                                aiAnimMesh* anim_mesh = anim_meshes[anim_index];
+
+                                if (!anim_mesh->HasPositions())
+                                {
+                                    LOG(ERR) << "Morph/shape key " << anim_mesh->mName << " on submesh \"" << submesh->name << "\" has no positions" << std::endl;
+                                    return false;
+                                }
+                                CONVASSERT(aSubmesh->mNumVertices == anim_mesh->mNumVertices);
+
+                                for (int32_t l = 0; l < aSubmesh->mNumVertices; ++l)
+                                {
+                                    uint32_t uv_index = l + vs * aSubmesh->mNumVertices;
+
+                                    //if (uv_data0[uv_index] != glm::vec2(anim_mesh->mVertices[l].x, anim_mesh->mVertices[l].y)) __debugbreak();
+                                    //if (uv_data1[uv_index] != glm::vec2(anim_mesh->mVertices[l].z, 0.0f)) __debugbreak();
+
+                                    uv_data0[uv_index] = glm::vec2(anim_mesh->mVertices[l].x, anim_mesh->mVertices[l].y);
+                                    uv_data1[uv_index] = glm::vec2(anim_mesh->mVertices[l].z, 0.0f);
+                                }
+                            }
+
+                            auto initialise_tangents = [normal_comps, &aSubmesh, &submesh](decltype(tangent_comps)& comps)
+                            {
+                                for (size_t c = 1; c < comps->size(); ++c)
+                                {
+                                    comps->at(c)->data.resize(sizeof(glm::vec3)* aSubmesh->mNumVertices);
+                                    comps->at(c)->elem_count = aSubmesh->mNumVertices;
+                                }
+                            };
+                            initialise_tangents(tangent_comps);
+                            initialise_tangents(bitangent_comps);
+                            /*
+                            ** the following code exists to store the extra tangents and bitangets that come with anim meshes
+                            ** but these values don't seem to actually be used in-game so they're being ommited
+                            ** this is because the main normals, tangents and bitangents all contain the same values, which cannot be correct
+                            */
+                            //auto assign_unknown_meshes = [normal_comps ,&aSubmesh, &submesh](decltype(tangent_comps)& comps, decltype(tangent_meshes)& meshes)
+                            //{
+                            //    for (size_t c = 1; c < comps->size(); ++c)
+                            //    {
+                            //        aiAnimMesh* anim_mesh = meshes[c - 1];
+                            //
+                            //        if (!anim_mesh->HasPositions())
+                            //        {
+                            //            LOG(ERR) << "Morph/shape key " << anim_mesh->mName << " on submesh \"" << submesh->name << "\" has no positions" << std::endl;
+                            //            return false;
+                            //        }
+                            //        CONVASSERT(aSubmesh->mNumVertices == anim_mesh->mNumVertices);
+                            //
+                            //        comps->at(c)->data.resize(sizeof(glm::vec3) * aSubmesh->mNumVertices);
+                            //        comps->at(c)->elem_count = aSubmesh->mNumVertices;
+                            //        glm::vec3* data = (glm::vec3*)comps->at(0)->data.data();
+                            //
+                            //        for (int32_t l = 0; l < aSubmesh->mNumVertices; ++l)
+                            //        {
+                            //            data[l] = (((glm::vec3*)normal_comps->at(0)->data.data())[l]);
+                            //        }
+                            //    }
+                            //    return true;
+                            //};
+                            //if (!assign_unknown_meshes(tangent_comps, tangent_meshes) ||
+                            //    !assign_unknown_meshes(bitangent_comps, bitangent_meshes)
+                            //) {
+                            //    return false;
+                            //}
+                        }
+                        
+                        if (tbn_comp_count > 1 && !submesh->has_mesh_keys_in_UVs)
+                        {
+                            Assimp::GenVertexNormalsProcess normal_processor;
+                            TangentProcessor tangent_processor;
+                            aiMesh tp_submesh;
+                            memcpy(&tp_submesh, aSubmesh, sizeof(aiMesh));
+
+                            tp_submesh.mNormals = nullptr;
+                            tp_submesh.mTangents = nullptr;
+                            tp_submesh.mBitangents = nullptr;
+
+                            if (!normal_processor.GenMeshVertexNormals(&tp_submesh, i))
+                            {
+                                LOG(ERR) << "Failed to calculate normals " << j << " for " << submesh->name << std::endl;
+                                memset(&tp_submesh, 0, sizeof(aiMesh)); //prevent pointer destruction
+                                return false;
+                            }
+                            if (!tangent_processor.process(&tp_submesh))
+                            {
+                                LOG(ERR) << "Failed to calculate tangents/bitangets " << j << " for " << submesh->name << std::endl;
+                                memset(&tp_submesh, 0, sizeof(aiMesh)); //prevent pointer destruction
+                                return false;
+                            }
+                            if (j < normal_comps->size())
+                            {
+                                normal_comps->at(j)->data.resize(sizeof(glm::vec3) * aSubmesh->mNumVertices);
+                                normal_comps->at(j)->elem_count = aSubmesh->mNumVertices;
+                                memcpy(normal_comps->at(j)->data.data(), tp_submesh.mNormals, normal_comps->at(j)->data.size());
+                            }
+                            if (j < tangent_comps->size())
+                            {
+                                tangent_comps->at(j)->data.resize(sizeof(glm::vec3) * aSubmesh->mNumVertices);
+                                tangent_comps->at(j)->elem_count = aSubmesh->mNumVertices;
+                                memcpy(tangent_comps->at(j)->data.data(), tp_submesh.mTangents, tangent_comps->at(j)->data.size());
+                            }
+                            if (j < bitangent_comps->size())
+                            {
+                                bitangent_comps->at(j)->data.resize(sizeof(glm::vec3) * aSubmesh->mNumVertices);
+                                bitangent_comps->at(j)->elem_count = aSubmesh->mNumVertices;
+                                memcpy(bitangent_comps->at(j)->data.data(), tp_submesh.mBitangents, bitangent_comps->at(j)->data.size());
+                            }
+                            delete[] tp_submesh.mNormals;
+                            delete[] tp_submesh.mTangents;
+                            delete[] tp_submesh.mBitangents;
+
+                            memset(&tp_submesh, 0, sizeof(aiMesh)); //prevent pointer destruction
+                        }
+                    }                  
                 }
-            }      
+            }          
 
             if (aSubmesh->HasBones())
             {
@@ -629,7 +931,8 @@ bool AssimpConversion::ConvertFromAssimpScene(const aiScene& aScene, Scene& scen
                 for (uint32_t j = 0; j < aSubmesh->mNumVertices; ++j)
                 {
                     std::sort(aBone_weights[j].begin(), aBone_weights[j].end(),
-                    [](const aiBoneWeight& a, const aiBoneWeight& b) -> bool {
+                    [](const aiBoneWeight& a, const aiBoneWeight& b) -> bool 
+                    {
                         return a.weight > b.weight;
                     });
                     //not sure what happened to make the following necessary
@@ -708,19 +1011,19 @@ bool AssimpConversion::ConvertFromAssimpScene(const aiScene& aScene, Scene& scen
 
                 if (auto it = aNode_map.find(submesh_node_name); it == aNode_map.end())
                 {
-                    gbl_warn << "Failed to find submesh_node " << submesh_node_name << std::endl;
+                    LOG(WARN) << "Failed to find submesh_node " << submesh_node_name << std::endl;
                     continue;
                 }
                 else aSubmesh_node = it->second;
 
-                scene.models[i].node->transform = scene.models[i].node->transform * Convert<glm::mat4>(aSubmesh_node->mTransformation);
+                scene.models[i].node->transform *= Convert<glm::mat4>(aSubmesh_node->mTransformation);
             }
             else
             {
                 //apply submesh_node transforms to submeshes
                 if (scene.models[i].mesh->models.size() > 1)
                 {
-                    gbl_warn << "submesh_node transforms could not be uniquely applied. Undesirable transforms may occur" << std::endl;
+                    LOG(WARN) << "submesh_node transforms could not be uniquely applied. Undesirable transforms may occur" << std::endl;
                 }
 
                 for (int64_t j = 0; j < scene.models[i].mesh->submeshes.size(); ++j)
@@ -731,7 +1034,7 @@ bool AssimpConversion::ConvertFromAssimpScene(const aiScene& aScene, Scene& scen
 
                     if (auto it = aNode_map.find(submesh_node_name); it == aNode_map.end())
                     {
-                        gbl_warn << "Failed to find submesh_node " << submesh_node_name << std::endl;
+                        LOG(WARN) << "Failed to find submesh_node " << submesh_node_name << std::endl;
                         continue;
                     }
                     else aSubmesh_node = it->second;
@@ -774,8 +1077,50 @@ bool AssimpConversion::ConvertFromAssimpScene(const aiScene& aScene, Scene& scen
     }
     catch (const std::exception& e)
     {
-        gbl_err << "Failed to convert assimp scene to scene - " << e.what() << std::endl;
+        LOG(ERR) << "Failed to convert assimp scene to scene - " << e.what() << std::endl;
         return false;
     }
     return true;
+}
+
+void AssimpConversion::ClearUnusedBones(aiScene& aScene)
+{
+    for (uint32_t i = 0; i < aScene.mNumMeshes; ++i)
+    {
+        aiMesh* aSubmesh = aScene.mMeshes[i];
+
+        if (aSubmesh->HasBones())
+        {
+            std::vector<uint32_t> used_local_bone_ids;
+            used_local_bone_ids.reserve(aSubmesh->mNumBones);
+
+            uint32_t old_bone_count = aSubmesh->mNumBones;
+            aiBone** old_bones = aSubmesh->mBones;
+
+            for (uint32_t j = 0; j < old_bone_count; ++j)
+            {
+                const aiBone* aBone = old_bones[j];
+
+                if (aBone->mNumWeights > 0)
+                {
+                    used_local_bone_ids.push_back(j);
+                }
+            }
+
+            aSubmesh->mNumBones = used_local_bone_ids.size();
+            aSubmesh->mBones = new aiBone * [used_local_bone_ids.size()];
+
+            for (uint32_t j = 0; j < used_local_bone_ids.size(); ++j)
+            {
+                aSubmesh->mBones[j] = old_bones[used_local_bone_ids[j]];
+                old_bones[used_local_bone_ids[j]] = nullptr;
+            }
+
+            for (uint32_t j = 0; j < old_bone_count; ++j)
+            {
+                delete old_bones[j];
+            }
+            delete[] old_bones;
+        }
+    }
 }

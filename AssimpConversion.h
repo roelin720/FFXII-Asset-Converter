@@ -7,6 +7,8 @@ namespace AssimpConversion
 	bool ConvertToAssimpScene(aiScene& aScene, const Scene& scene);
 	bool ConvertFromAssimpScene(const aiScene& aScene, Scene& scene);
 
+    void ClearUnusedBones(aiScene& aScene);
+
     //assimp math conversion functions:
 
     template<typename DstT, typename SrcT>

@@ -11,7 +11,7 @@
 #include "imgui.h"
 #include "Pipe.h"
 
-#define GUILOG(type, message) { std::cout << message << std::endl; GUI::log_mutex.lock(); logs.push(::Log(type, message)); GUI::log_mutex.unlock(); }
+#define GUILOG(type, message) { std::cout << message << std::endl; GUI::log_mutex.lock(); logs.push(::GUILog(type, message)); GUI::log_mutex.unlock(); }
 
 namespace GUIMessagePayload
 {
@@ -28,7 +28,7 @@ namespace GUIMessagePayload
 	};
 	struct Generic
 	{
-		static constexpr size_t label_max_len = 512;
+		static constexpr size_t label_max_len = 1024;
 		char label[label_max_len] = {};
 	};
 	struct Progress : public Generic
@@ -52,7 +52,7 @@ public:
 	static std::mutex mute_mutex;
 	static ctpl::thread_pool thread_pool;
 
-	static Logs logs;
+	static GUILogs logs;
 	static PathHistory history;
 
 	FileBrowser browser;
@@ -81,10 +81,13 @@ public:
 
 	bool exiting = false;
 	bool processing = false;
+	bool info_visible = true;
 	bool warnings_visible = true;
 	bool convert_via_cmd_interface = false;
 
 	PathID dialog_pathID = PathID_INVALID;
+
+	static int32_t last_char;
 
 	GUI();
 
@@ -116,4 +119,6 @@ public:
 
 	bool run_command(bool pack, bool unpack);
 	bool validate_paths(bool pack, bool unpack);
+	
+	bool is_log_visible(const GUILog& log);
 };

@@ -183,7 +183,7 @@ BlendShapeChannel::BlendShapeChannel(uint64_t id, const Element& element, const 
         if (sg) {
             auto pr = shapeGeometries.insert(sg);
             if (!pr.second) {
-                FBXImporter::LogWarn("there is the same shapeGeometrie id ", sg->ID());
+                FBXImporter::LogWarn("there is the same shape Geometry id ", sg->ID());
             }
         }
     }

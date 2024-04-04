@@ -76,7 +76,7 @@ public:
 
 	GUI& gui;
 
-	HWND window = NULL;
+	HWND hwnd = NULL;
 	ClipDropTarget* drop_target = nullptr;
 	bool dragging_current_file = false;
 	bool dragging_left = false;
@@ -124,6 +124,10 @@ public:
 	void create_new_folder();
 	void rename_current_file(const std::string& new_name);
 	void trash_current_file();
+
+	bool get_external_dialog_path(bool file, bool folder, bool is_new, std::wstring& path);
+	void run_extract_dialog();
+	void run_inject_dialog();
 	
 	void draw_content();
 	void draw_rename_modal_window();

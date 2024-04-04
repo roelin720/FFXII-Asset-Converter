@@ -39,15 +39,41 @@
 #include "Icons/app_icon16_data.h"
 #include "Icons/app_icon32_data.h"
 #include "Icons/app_icon48_data.h"
+#include <Dbghelp.h>
 
 PathHistory GUI::history;
 ctpl::thread_pool GUI::thread_pool;
-Logs GUI::logs;
+GUILogs GUI::logs;
 std::recursive_mutex GUI::log_mutex;
 std::mutex GUI::mute_mutex;
+int32_t GUI::last_char = 0;
 
 namespace
 {
+	typedef BOOL(WINAPI* MINIDUMPWRITEDUMP)(HANDLE hProcess, DWORD dwPid, HANDLE hFile, MINIDUMP_TYPE DumpType, CONST PMINIDUMP_EXCEPTION_INFORMATION ExceptionParam, CONST PMINIDUMP_USER_STREAM_INFORMATION UserStreamParam, CONST PMINIDUMP_CALLBACK_INFORMATION CallbackParam);
+
+	void create_minidump(struct _EXCEPTION_POINTERS* apExceptionInfo)
+	{
+		HMODULE mhLib = ::LoadLibrary(_T("dbghelp.dll"));
+		MINIDUMPWRITEDUMP pDump = (MINIDUMPWRITEDUMP)::GetProcAddress(mhLib, "MiniDumpWriteDump");
+
+		HANDLE  hFile = ::CreateFile(_T("core.dmp"), GENERIC_WRITE, FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+
+		_MINIDUMP_EXCEPTION_INFORMATION ExInfo = {};
+		ExInfo.ThreadId = ::GetCurrentThreadId();
+		ExInfo.ExceptionPointers = apExceptionInfo;
+		ExInfo.ClientPointers = FALSE;
+
+		pDump(GetCurrentProcess(), GetCurrentProcessId(), hFile, MiniDumpNormal, &ExInfo, NULL, NULL);
+		CloseHandle(hFile);
+	}
+
+	LONG WINAPI unhandled_handler(struct _EXCEPTION_POINTERS* apExceptionInfo)
+	{
+		create_minidump(apExceptionInfo);
+		return EXCEPTION_CONTINUE_SEARCH;
+	}
+
 	void GLAPIENTRY opengl_message_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userParam)
 	{
 		if (type == GL_DEBUG_TYPE_ERROR)
@@ -97,6 +123,35 @@ namespace
 			ShellExecuteA(NULL, "open", ("\"" + path + "\"").c_str(), NULL, NULL, SW_SHOWDEFAULT);
 		}
 	}
+
+	bool has_cli_err(const std::list<std::pair<uint32_t, std::string>>& cli_logs)
+	{
+		for (auto& cli_log : cli_logs)
+		{
+			if (cli_log.first == ERR.ID) return true;
+		}
+		return false;
+	}
+
+	void add_cli_logs(GUILogs& gui_logs, const std::list<std::pair<uint32_t, std::string>>& cli_logs)
+	{
+		std::string log_str;
+		for (auto it = cli_logs.begin(); it != cli_logs.end(); ++it)
+		{
+			auto next = it; ++next;
+
+			log_str += it->second;
+			if (next == cli_logs.end() || it->first != next->first)
+			{
+				if (it->first == INFO.ID)		gui_logs.push(GUILog(GUILog_ConvInfo,	 log_str));
+				if (it->first == KEYINFO.ID)	gui_logs.push(GUILog(GUILog_ConvKeyInfo, log_str));
+				if (it->first == WARN.ID)		gui_logs.push(GUILog(GUILog_ConvWarn,	 log_str));
+				if (it->first == ERR.ID)		gui_logs.push(GUILog(GUILog_ConvError,	 log_str));
+				if (it->first == SUCCESS.ID)	gui_logs.push(GUILog(GUILog_ConvSuccess, log_str));
+				log_str.clear();
+			}
+		}
+	}
 }
 
 GUI::GUI(): browser(*this) {}
@@ -136,11 +191,11 @@ bool GUI::init(GUITask task, std::string pipe_name)
 
 	glfwSetErrorCallback([](int error, const char* description)
 	{
-		gbl_err << "Glfw Error " << error << ": " << description << std::endl;
+		LOG(ERR) << "Glfw Error " << error << ": " << description << std::endl;
 	});
 	if (glfwInit() == false)
 	{
-		gbl_err << "failed to initialise GLFW " << std::endl;
+		LOG(ERR) << "failed to initialise GLFW " << std::endl;
 		return false;
 	}
 	glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
@@ -151,26 +206,26 @@ bool GUI::init(GUITask task, std::string pipe_name)
 		if (!pipe.open(pipe_name))
 		{
 			glfwTerminate();
-			gbl_err << "Failed to open pipe" << std::endl;
+			LOG(ERR) << "Failed to open pipe" << std::endl;
 			return false;
 		}
 
 		GUIMessage message;
 		if (!pipe.read(message))
 		{
-			gbl_err << "Failed to read pipe message" << std::endl;
+			LOG(ERR) << "Failed to read pipe message" << std::endl;
 			glfwTerminate();
 			return false;
 		}
 		if (message != GUIMessage::WindowInit)
 		{
-			gbl_err << "Initial pipe message is not GUIMessage::Init" << std::endl;
+			LOG(ERR) << "Initial pipe message is not GUIMessage::Init" << std::endl;
 			glfwTerminate();
 			return false;
 		}
 		if (!pipe.read(init))
 		{
-			gbl_err << "Failed to read Init payload from pipe" << std::endl;
+			LOG(ERR) << "Failed to read Init payload from pipe" << std::endl;
 			glfwTerminate();
 			return false;
 		}
@@ -203,7 +258,7 @@ bool GUI::init(GUITask task, std::string pipe_name)
 
 	if ((CoInitialize(NULL) != S_OK)) //for audio management
 	{
-		gbl_err << "Failed to initialise COM library" << std::endl;
+		LOG(ERR) << "Failed to initialise COM library" << std::endl;
 		return false;
 	}
 
@@ -214,8 +269,7 @@ bool GUI::init(GUITask task, std::string pipe_name)
 	window = glfwCreateWindow(init.width, init.height, init.title, nullptr, nullptr);
 	if (window == NULL)
 	{
-		gbl_err << "Unable to create GLFW window " << std::endl;
-		glfwDestroyWindow(window);
+		LOG(ERR) << "Unable to create GLFW window " << std::endl;
 		glfwTerminate();
 		CoUninitialize();
 	}
@@ -237,6 +291,7 @@ bool GUI::init(GUITask task, std::string pipe_name)
 
 	glfwMakeContextCurrent(window);
 	glfwSwapInterval(1);
+	glfwSetCharCallback(window, [](GLFWwindow* window, unsigned int codepoint) { GUI::last_char = codepoint; });
 
 	if (init.pos_x > 0 && init.pos_y > 0)
 	{
@@ -245,9 +300,9 @@ bool GUI::init(GUITask task, std::string pipe_name)
 	glfwShowWindow(window);
 	glfwDefaultWindowHints();
 
-	if (!gladLoadGL())
+	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
 	{
-		gbl_err << "Unable to initialize GLAD " << std::endl;
+		LOG(ERR) << "Unable to initialize GLAD " << std::endl;
 		glfwDestroyWindow(window);
 		glfwTerminate();
 		CoUninitialize();
@@ -276,18 +331,20 @@ bool GUI::init(GUITask task, std::string pipe_name)
 	{
 	case GUITask::Main:
 	{
+		SetUnhandledExceptionFilter(unhandled_handler);
+
 		ImGui::GetIO().IniFilename = "main_ui.ini";
 		load_config();
 		history.load();
 
 		if (!browser.init(glfwGetWin32Window(window)))
 		{
-			gbl_err << "Failed to initialise file browser" << std::endl;
+			LOG(ERR) << "Failed to initialise file browser" << std::endl;
 			return false;
 		}
 
-		GUILOG(Log_StartInfo, "After inputting the requisite file paths, click \"Pack\" or \"Unpack\" to execute processing.");
-		GUILOG(Log_StartInfo, "If any errors are encountered, please report them, and revert to the command-line version of this program in the meantime.");
+		GUILOG(GUILog_Info, "After inputting the requisite file paths, click \"Pack\" or \"Unpack\" to execute processing.");
+		GUILOG(GUILog_Info, "If any errors are encountered, please report them, and revert to the command-line version of this program in the meantime.");
 
 		std::thread mute_thread_tmp([this]()
 		{
@@ -337,6 +394,7 @@ void GUI::run()
 		case GUITask::Confirmation:	draw_confirmation_ui(); break;
 		case GUITask::Progress:		draw_progress_ui(); break;
 		}
+		last_char = 0;
 
 		ImGui::End();
 
@@ -421,7 +479,7 @@ void GUI::draw_main_ui()
 	draw_input_path("Original Asset/Folder", history.current[PathID_ORIG], PathID_ORIG);
 	if (draw_processing_button("Unpack"))
 	{
-		GUILOG(Log_Info, std::string(20, '-'));
+		GUILOG(GUILog_Info, std::string(30, '-'));
 		run_command(false , true);
 		history.push(history.current[PathID_ORIG], PathID_ORIG);
 		history.push(history.current[PathID_INTR], PathID_INTR);
@@ -430,7 +488,7 @@ void GUI::draw_main_ui()
 	draw_input_path("Intermediary Asset/Folder", history.current[PathID_INTR], PathID_INTR);
 	if (draw_processing_button("Pack"))
 	{
-		GUILOG(Log_Info, std::string(20, '-'));
+		GUILOG(GUILog_Info, std::string(30, '-'));
 		run_command(true, false);
 		history.push(history.current[PathID_ORIG], PathID_ORIG);
 		history.push(history.current[PathID_INTR], PathID_INTR);
@@ -473,6 +531,10 @@ void GUI::draw_main_ui()
 		if (ImGui::BeginMenu("A##visiblity_options"))
 		{
 			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+			if (ImGui::MenuItem("Minor Info", NULL, &info_visible))
+			{
+				save_config();
+			}
 			if (ImGui::MenuItem("Warnings", NULL, &warnings_visible))
 			{
 				save_config();
@@ -492,7 +554,7 @@ void GUI::draw_main_ui()
 			std::string log_sum;
 			for (auto& log : logs.data)
 			{
-				if (log.type != Log_StartInfo && (warnings_visible || (log.type != Log_Warn && log.type != Log_ConvWarn)))
+				if (is_log_visible(log))
 				{
 					log_sum += log;
 				}
@@ -518,13 +580,13 @@ void GUI::draw_main_ui()
 	log_mutex.lock();
 	for (auto& log : logs.data)
 	{
-		if (log.type < Log_COUNT && log.type >= 0) 
+		if (log.type < GUILog_COUNT && log.type >= 0) 
 		{
 			ImGui::PushStyleColor(ImGuiCol_Text, LogColours[log.type]);
 		}
 		else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f)); 
 
-		if (warnings_visible || (log.type != Log_Warn && log.type != Log_ConvWarn))
+		if (is_log_visible(log)) 
 		{
 			ImGui::TextWrapped(log.c_str());
 		}
@@ -539,7 +601,7 @@ void GUI::draw_main_ui()
 		uint64_t time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 		uint64_t index = (time % 1000) / (1000 / 10);
 
-		ImGui::PushStyleColor(ImGuiCol_Text, LogColours[Log_Info]);
+		ImGui::PushStyleColor(ImGuiCol_Text, LogColours[GUILog_KeyInfo]);
 		ImGui::TextEx(indicator, indicator + index + 1);
 		ImGui::PopStyleColor();
 	}
@@ -562,21 +624,21 @@ void GUI::draw_confirmation_ui()
 	{
 		if (!pipe.read(message))
 		{
-			gbl_log << "Failed to read pipe message" << std::endl;
+			LOG(ERR) << "Failed to read pipe message" << std::endl;
 			glfwSetWindowShouldClose(window, GLFW_TRUE);
 			pipe.close();
 			return;
 		}
 		if (message != GUIMessage::Confirmation)
 		{
-			gbl_log << "Unexpected message recieved" << std::endl;
+			LOG(ERR) << "Unexpected message recieved" << std::endl;
 			glfwSetWindowShouldClose(window, GLFW_TRUE);
 			pipe.write(last_post = GUIMessage::Exit);
 			return;
 		}
 		if (!pipe.read(confirmation))
 		{
-			gbl_log << "Failed to read pipe message payload" << std::endl;
+			LOG(ERR) << "Failed to read pipe message payload" << std::endl;
 			glfwSetWindowShouldClose(window, GLFW_TRUE);
 			pipe.close();
 			return;
@@ -635,6 +697,7 @@ void GUI::draw_progress_ui()
 	if (made_first_request == false)
 	{
 		pipe.write(last_post = GUIMessage::Request);
+		strcpy_s(progress.label, progress.label_max_len, "Preparing...");
 		made_first_request = true;
 	}
 
@@ -643,7 +706,7 @@ void GUI::draw_progress_ui()
 		GUIMessage message;
 		if(!pipe.read(message))
 		{
-			gbl_log << "Failed to read pipe message" << std::endl;
+			LOG(INFO) << "Failed to read pipe message" << std::endl;
 			glfwSetWindowShouldClose(window, GLFW_TRUE);
 			pipe.close();
 			return;
@@ -657,7 +720,7 @@ void GUI::draw_progress_ui()
 		{
 			if (!pipe.read(progress))
 			{
-				gbl_log << "Failed to read pipe message payload" << std::endl;
+				LOG(INFO) << "Failed to read pipe message payload" << std::endl;
 				glfwSetWindowShouldClose(window, GLFW_TRUE);
 				pipe.close();
 				return;
@@ -728,24 +791,24 @@ GUIMessage GUI::confirm(const std::string& label, GUIMessage button_types)
 
 	if (!pipe.create("Confirmation" + std::to_string(GetCurrentProcessId())))
 	{
-		GUILOG(Log_Error, "Failed to create confirmation box pipe");
+		GUILOG(GUILog_Error, "Failed to create confirmation box pipe");
 		return GUIMessage::INVALID;
 	}
 	confirm_proc = Process::RunGUIProcess(GUITask::Confirmation, pipe.name);
 	if (confirm_proc == INVALID_HANDLE_VALUE)
 	{
-		GUILOG(Log_Error, "Failed to create confirmation box process");
+		GUILOG(GUILog_Error, "Failed to create confirmation box process");
 		return GUIMessage::INVALID;
 	}
 	if (!pipe.connect())
 	{
-		GUILOG(Log_Error, "Failed to connect confirmation box pipe");
+		GUILOG(GUILog_Error, "Failed to connect confirmation box pipe");
 		Process::TerminateGUIProcess(confirm_proc);
 		return GUIMessage::INVALID;
 	}
 	if (!pipe.write(GUIMessage::WindowInit) || !pipe.write(init))
 	{
-		GUILOG(Log_Error, "Failed to initialise confirmation box pipe");
+		GUILOG(GUILog_Error, "Failed to initialise confirmation box pipe");
 		Process::TerminateGUIProcess(confirm_proc);
 		return GUIMessage::INVALID;
 	}
@@ -760,7 +823,7 @@ GUIMessage GUI::confirm(const std::string& label, GUIMessage button_types)
 	GUIMessage message;
 	if (!pipe.read(message))
 	{
-		GUILOG(Log_Error, "Failed to read confirmation read pipe message");
+		GUILOG(GUILog_Error, "Failed to read confirmation read pipe message");
 		Process::TerminateGUIProcess(confirm_proc);
 		return GUIMessage::INVALID;
 	}
@@ -840,6 +903,7 @@ void GUI::load_config()
 			}
 			play_muted = doc.HasMember("play_muted") ? doc["play_muted"].GetBool() : play_muted;
 			warnings_visible = doc.HasMember("warnings_visible") ? doc["warnings_visible"].GetBool() : warnings_visible;
+			info_visible = doc.HasMember("info_visible") ? doc["info_visible"].GetBool() : info_visible;
 			convert_via_cmd_interface = doc.HasMember("convert_via_cmd_interface") ? doc["convert_via_cmd_interface"].GetBool() : convert_via_cmd_interface;
 		}
 
@@ -856,7 +920,7 @@ void GUI::save_config()
 			"{ \"play_path\" : \"" + config_path + "\"" + 
 			", \"play_muted\" : " + (play_muted ? "true" : "false") +
 			", \"warnings_visible\" : " + (warnings_visible ? "true" : "false") +
-			", \"warnings_visible\" : " + (warnings_visible ? "true" : "false") +
+			", \"info_visible\" : " + (info_visible ? "true" : "false") +
 			", \"convert_via_cmd_interface\" : " + (convert_via_cmd_interface ? "true" : "false") +
 			"} ";
 		doc.Parse(json.c_str());
@@ -950,7 +1014,7 @@ void GUI::draw_play_buttons()
 	{
 		if (!std::filesystem::exists(config_path))
 		{
-			GUILOG(Log_Error, "path does not exist - \"" + config_path + "\"");
+			GUILOG(GUILog_Error, "path does not exist - \"" + config_path + "\"");
 			config_path = "";
 			save_config();
 		}
@@ -1048,12 +1112,16 @@ bool GUI::validate_paths(bool pack, bool unpack)
 {
 	bool processing_folder = false;
 
-	if (std::string(history.current[PathID_ORIG]).contains(".vbf"))
+	std::string orig_path = IO::Normalise(history.current[PathID_ORIG]);
+	std::string intr_path = IO::Normalise(history.current[PathID_INTR]);
+	std::string mod_path = IO::Normalise(history.current[PathID_MOD]);
+
+	if (std::string(orig_path).contains(".vbf"))
 	{
 		std::string arc_path, file_name;
-		if (!VBFUtils::Separate(history.current[PathID_ORIG], arc_path, file_name))
+		if (!VBFUtils::Separate(orig_path, arc_path, file_name))
 		{
-			GUILOG(Log_Error, "Vbf asset path is invalid");
+			GUILOG(GUILog_Error, "Vbf asset path is invalid");
 			return false;
 		}
 		
@@ -1061,66 +1129,66 @@ bool GUI::validate_paths(bool pack, bool unpack)
 		const VBFArchive::TreeNode* node = arc_rec->archive.find_node(file_name);
 		if (!node)
 		{
-			GUILOG(Log_Error, "Failed to find " + file_name + " in vbf");
+			GUILOG(GUILog_Error, "Failed to find " + file_name + " in vbf");
 			return false;
 		}
 		processing_folder = !node->children.empty();
 	}
 	else
 	{
-		if (!IO::VerifyFileAccessible(history.current[PathID_ORIG]))
+		if (!IO::VerifyFileAccessible(orig_path))
 		{
-			GUILOG(Log_Error, "Original asset path is not accessible");
+			GUILOG(GUILog_Error, "Original asset path is not accessible");
 			return false;
 		}
 
-		processing_folder = IO::IsDirectory(history.current[PathID_ORIG]);
+		processing_folder = IO::IsDirectory(orig_path);
 
-		if (!processing_folder && !IO::VerifyHeader(history.current[PathID_ORIG]))
+		if (!processing_folder && !IO::VerifyHeader(orig_path))
 		{
-			GUILOG(Log_Error, "the original asset file has an unknown file structure");
+			GUILOG(GUILog_Error, "the original asset file has an unknown file structure");
 			return false;
 		}
 	}
 
-	if (std::string(history.current[PathID_INTR]).contains(".vbf"))
+	if (std::string(intr_path).contains(".vbf"))
 	{
-		GUILOG(Log_Error, "The intermediary asset path cannot be in a vbf");
+		GUILOG(GUILog_Error, "The intermediary asset path cannot be in a vbf");
 		return false;
 	}
 
-	if (pack && !IO::VerifyFileAccessible(history.current[PathID_INTR]))
+	if (pack && !IO::VerifyFileAccessible(intr_path))
 	{
-		GUILOG(Log_Error, "The intermediary asset path is not accessible");
+		GUILOG(GUILog_Error, "The intermediary asset path is not accessible");
 		return false;
 	}
 
-	if (pack && processing_folder && !IO::IsDirectory(history.current[PathID_INTR]))
+	if (pack && processing_folder && !IO::IsDirectory(intr_path))
 	{
-		GUILOG(Log_Error, "The original asset path is a folder but the intermediary asset path is a file");
+		GUILOG(GUILog_Error, "The original asset path is a folder but the intermediary asset path is a file");
 		return false;
 	}
 
-	if (pack && !processing_folder && IO::IsDirectory(history.current[PathID_INTR]))
+	if (pack && !processing_folder && IO::IsDirectory(intr_path))
 	{
-		GUILOG(Log_Error, "The original asset path is a file but the intermediary asset path is a folder");
+		GUILOG(GUILog_Error, "The original asset path is a file but the intermediary asset path is a folder");
 		return false;
 	}
 
-	if (unpack && !IO::VerifyParentFolderAccessible(history.current[PathID_INTR]))
+	if (unpack && !IO::VerifyParentFolderAccessible(intr_path))
 	{
-		GUILOG(Log_Error, "The replacemnt asset path's parent folder is not accessible");
+		GUILOG(GUILog_Error, "The replacemnt asset path's parent folder is not accessible");
 		return false;
 	}
 
 	if (pack) 
 	{
-		if (std::string(history.current[PathID_MOD]).contains(".vbf"))
+		if (std::string(mod_path).contains(".vbf"))
 		{
 			std::string arc_path, file_name;
-			if (!VBFUtils::Separate(history.current[PathID_MOD], arc_path, file_name))
+			if (!VBFUtils::Separate(mod_path, arc_path, file_name))
 			{
-				GUILOG(Log_Error, "VBF asset path is invalid");
+				GUILOG(GUILog_Error, "VBF asset path is invalid");
 				return false;
 			}
 
@@ -1132,27 +1200,33 @@ bool GUI::validate_paths(bool pack, bool unpack)
 			const VBFArchive::TreeNode* node = arc_rec->archive.find_node(file_name);;
 			if (!node)
 			{
-				GUILOG(Log_Error, "Failed to find " + file_name + " in vbf");
+				GUILOG(GUILog_Error, "Failed to find " + file_name + " in vbf");
 				return false;
 			}
 		}
 		else
 		{
-			if (!IO::VerifyParentFolderAccessible(history.current[PathID_MOD]))
+			if (!IO::VerifyParentFolderAccessible(mod_path))
 			{
-				GUILOG(Log_Error, "The output-mod asset path's parent folder is not accessible");
+				GUILOG(GUILog_Error, "The output-mod asset path's parent folder is not accessible");
 				return false;
 			}
 
-			if (!IO::VerifyDifferent(history.current[PathID_ORIG], history.current[PathID_MOD]))
+			if (!IO::VerifyDifferent(orig_path, mod_path))
 			{
-				GUILOG(Log_Error, "The original and output-mod asset paths must be different");
+				GUILOG(GUILog_Error, "The original and output-mod asset paths must be different");
 				return false;
 			}
 		}
 	}
 
 	return true;
+}
+
+bool GUI::is_log_visible(const GUILog& log)
+{
+	return	(warnings_visible	|| (log.type != GUILog_Warn && log.type != GUILog_ConvWarn)) &&
+			(info_visible		|| (log.type != GUILog_Info && log.type != GUILog_ConvInfo));
 }
 
 bool GUI::run_command(bool pack, bool unpack)
@@ -1162,7 +1236,7 @@ bool GUI::run_command(bool pack, bool unpack)
 #ifndef NDEBUG
 	if (convert_via_cmd_interface)
 	{
-		GUILOG(Log_Info, "Converting via CMD interface and logging to console");
+		GUILOG(GUILog_KeyInfo, "Converting via CMD interface and logging to console");
 
 		processing = true;
 
@@ -1205,7 +1279,7 @@ bool GUI::run_command(bool pack, bool unpack)
 			std::string arc_path, file_name;
 			if (!VBFUtils::Separate(path, arc_path, file_name))
 			{
-				GUILOG(Log_Error, "failed to deduce archive paths for " + path);
+				GUILOG(GUILog_Error, "failed to deduce archive paths for " + path);
 				return false;
 			}
 
@@ -1217,21 +1291,20 @@ bool GUI::run_command(bool pack, bool unpack)
 
 				thread_pool.push([this, pack, unpack, arc_path, find](int)
 				{
-					std::stringstream err_stream;
-					std::streambuf* old_cerr = gbl_err.ostream->rdbuf(err_stream.rdbuf());
+					GlobalLogger::direct_to_sstream();
 
-					GUILOG(Log_Info, "Loading vbf " + arc_path);
+					GUILOG(GUILog_KeyInfo, "Loading vbf " + arc_path);
 
 					find->second.valid = find->second.archive.load(arc_path);
 					find->second.loaded = true;
 
 					if (!find->second.valid)
 					{
-						gbl_err.ostream->rdbuf(old_cerr);
-						GUILOG(Log_Error, err_stream.str());
-						GUILOG(Log_Error, "Failed to load vbf " + arc_path);
+						GUILOG(GUILog_Error, GlobalLogger::sstream.str());
+						GlobalLogger::direct_to_file();
+						GUILOG(GUILog_Error, "Failed to load vbf " + arc_path);
 					}
-					gbl_err.ostream->rdbuf(old_cerr);
+					GlobalLogger::direct_to_file();
 					processing = false;
 
 					run_command(pack, unpack);
@@ -1240,13 +1313,13 @@ bool GUI::run_command(bool pack, bool unpack)
 			}
 			while (!find->second.loaded)
 			{
-				GUILOG(Log_Info, "Waiting for vbf to load - " + arc_path);
+				GUILOG(GUILog_Info, "Waiting for vbf to load - " + arc_path);
 				Sleep(2000);
 			}
 
 			if (!find->second.valid)
 			{
-				GUILOG(Log_Error, "Failed to load vbf previously " + arc_path);
+				GUILOG(GUILog_Error, "Failed to load vbf previously " + arc_path);
 				return false;
 			}
 		}
@@ -1267,6 +1340,8 @@ bool GUI::run_command(bool pack, bool unpack)
 			return false;
 		}
 	}
+
+	if (exiting) return false;
 
 	processing = true;
 
@@ -1293,25 +1368,25 @@ bool GUI::run_command(bool pack, bool unpack)
 			tmp_src_dir = IO::CreateTmpPath("tmp_vbf_src");
 			if (tmp_src_dir.empty())
 			{
-				GUILOG(Log_Error, "Failed to create temp path tmp_vbf_src");
+				GUILOG(GUILog_Error, "Failed to create temp path tmp_vbf_src");
 				processing = false;
 				return false;
 			}
 
-			GUILOG(Log_Info, "Extracting vbf file(s)...");
+			GUILOG(GUILog_Info, "Extracting vbf file(s)...");
 			
-			std::stringstream err_stream;
-			std::streambuf* old_cerr = gbl_err.ostream->rdbuf(err_stream.rdbuf());
+			GlobalLogger::direct_to_sstream();
 
-			if (!arc_rec->archive.extract_all(tmp_src_dir, *node))
+			if (!arc_rec->archive.extract_all(*node, tmp_src_dir, &exiting))
 			{
-				gbl_err.ostream->rdbuf(old_cerr);
-				GUILOG(Log_Error, err_stream.str());
+				GUILOG(GUILog_Error, GlobalLogger::sstream.str());
+				GlobalLogger::direct_to_file();
 				std::filesystem::remove(tmp_src_dir);
 				processing = false;
 				return false;
 			}
-			gbl_err.ostream->rdbuf(old_cerr);
+			GUILOG(GUILog_Info, GlobalLogger::sstream.str());
+			GlobalLogger::direct_to_file();
 
 			orig_path = tmp_src_dir + (IO::IsDirectory(orig_path) ? "" : "/" + IO::FileName(orig_path));
 
@@ -1323,7 +1398,7 @@ bool GUI::run_command(bool pack, bool unpack)
 			tmp_dst_dir = IO::CreateTmpPath("tmp_vbf_dst");
 			if(tmp_dst_dir.empty()) 
 			{
-				GUILOG(Log_Error, "Failed to create temp path tmp_vbf_dst");
+				GUILOG(GUILog_Error, "Failed to create temp path tmp_vbf_dst");
 				processing = false;
 				return false;
 			}
@@ -1332,11 +1407,11 @@ bool GUI::run_command(bool pack, bool unpack)
 
 		processing_folder = IO::IsDirectory(orig_path);
 
-		if (processing_folder &&
+		if (processing_folder && orig_path != intr_path &&
 			unpack && !IO::CopyFolderHierarchy(intr_path, orig_path) ||
 			pack && !IO::CopyFolderHierarchy(mod_path, orig_path)
 		) {
-			GUILOG(Log_Error, "Failed to copy the original asset path's folder hierarchy");
+			GUILOG(GUILog_Error, "Failed to copy the original asset path's folder hierarchy");
 			processing = false;
 			return false;
 		}
@@ -1357,6 +1432,8 @@ bool GUI::run_command(bool pack, bool unpack)
 			{
 				for (const auto& entry : fs::recursive_directory_iterator(orig_path))
 				{
+					if (exiting) return false;
+
 					if (!entry.is_regular_file())
 					{
 						continue;
@@ -1382,18 +1459,22 @@ bool GUI::run_command(bool pack, bool unpack)
 
 			if (jobs.empty())
 			{
-				GUILOG(Log_Error, "No files were found");
+				GUILOG(GUILog_Error, "No files were found");
 				processing = false;
 				return false;
 			}
 
-			GUILOG(Log_Info, "Finding texture reference(s)...");
+			if (exiting) return false;
+
+			GUILOG(GUILog_Info, "Finding texture reference(s)...");
 
 			std::vector<std::array<std::string, 3>> ref_unpack_jobs;
 			std::map<std::string, std::string> ref_file_unpack_map;
 
 			for (auto& job : jobs)
 			{
+				if (exiting) return false;
+
 				if (!job[0].ends_with("dae.phyre"))
 				{
 					continue;
@@ -1423,9 +1504,11 @@ bool GUI::run_command(bool pack, bool unpack)
 				}
 			}
 
+			if (exiting) return false;
+
 			if (ref_file_unpack_map.empty())
 			{
-				GUILOG(Log_Warn, "Failed to find texture reference(s)");
+				GUILOG(GUILog_Warn, "Failed to find texture reference(s)");
 			}
 
 			for (const auto& file_unpack : ref_file_unpack_map)
@@ -1455,14 +1538,11 @@ bool GUI::run_command(bool pack, bool unpack)
 				}
 			}
 
-			if (ref_unpack_jobs.empty())
-			{
-
-			}
+			if (exiting) return false;
 
 			if (!ref_unpack_jobs.empty())
 			{
-				GUILOG(Log_Info, "Unpacking texture reference(s)...");
+				GUILOG(GUILog_Info, "Unpacking texture reference(s)...");
 
 				std::vector<bool> ref_tasks_completed(ref_unpack_jobs.size(), false);
 
@@ -1473,14 +1553,21 @@ bool GUI::run_command(bool pack, bool unpack)
 
 					thread_pool.push([this, cmd, id, i, &ref_tasks_completed, &ref_unpack_jobs](int)
 					{
-						std::string out, warn, err;
-						int err_code = Process::RunConvertProcess(cmd, out, warn, err, id);
+						if (exiting)
+						{
+							ref_tasks_completed[i] = true;
+							return;
+						}
+
+						std::list<std::pair<uint32_t, std::string>> cli_logs;
+						int err_code = Process::RunConvertProcess(cmd, cli_logs, id);
 
 						log_mutex.lock();
-						if (err_code != 0 && err.empty())	GUILOG(Log_ConvError, "An unhandled error caused unpacking " + ref_unpack_jobs[i][0] + " to fail")
-						if (!err.empty())					GUILOG(Log_ConvError, err);
-						if (!warn.empty())					GUILOG(Log_ConvWarn, warn);
-						if (err_code == 0 && !out.empty())	GUILOG(Log_ConvInfo, out);
+						if (err_code != 0 && !has_cli_err(cli_logs))
+						{
+							GUILOG(GUILog_ConvError, "An unhandled error caused unpacking " + ref_unpack_jobs[i][0] + " to fail")
+						}
+						add_cli_logs(logs, cli_logs);
 						log_mutex.unlock();
 						
 						ref_tasks_completed[i] = true;
@@ -1493,7 +1580,9 @@ bool GUI::run_command(bool pack, bool unpack)
 				}
 			}
 
-			GUILOG(Log_Info, "Unpacking file(s)...");
+			if (exiting) return false;
+
+			GUILOG(GUILog_Info, "Unpacking file(s)...");
 
 			std::vector<bool> tasks_completed(jobs.size(), false);
 
@@ -1504,14 +1593,21 @@ bool GUI::run_command(bool pack, bool unpack)
 				
 				thread_pool.push([this, cmd, id, i, &tasks_completed, &jobs](int)
 				{
-					std::string out, warn, err;
-					int err_code = Process::RunConvertProcess(cmd, out, warn, err, id);
-					
+					if (exiting) 
+					{
+						tasks_completed[i] = true;
+						return;
+					}
+
+					std::list<std::pair<uint32_t, std::string>> cli_logs;
+					int err_code = Process::RunConvertProcess(cmd, cli_logs, id);
+
 					log_mutex.lock();
-					if (err_code != 0 && err.empty())	GUILOG(Log_ConvError, "An unhandled error caused unpacking " + jobs[i][0] + " to fail")
-					if (!err.empty())					GUILOG(Log_ConvError, err);
-					if (!warn.empty())					GUILOG(Log_ConvWarn, warn);
-					if (err_code == 0 && !out.empty())	GUILOG(Log_ConvInfo, out);
+					if (err_code != 0 && !has_cli_err(cli_logs))
+					{
+						GUILOG(GUILog_ConvError, "An unhandled error caused unpacking " + jobs[i][0] + " to fail")
+					}
+					add_cli_logs(logs, cli_logs);
 					log_mutex.unlock();
 
 					tasks_completed[i] = true;
@@ -1535,6 +1631,8 @@ bool GUI::run_command(bool pack, bool unpack)
 			{
 				for (const auto& entry : fs::recursive_directory_iterator(intr_path))
 				{
+					if (exiting) return false;
+
 					if (!entry.is_regular_file())
 					{
 						continue;
@@ -1558,12 +1656,14 @@ bool GUI::run_command(bool pack, bool unpack)
 
 			if (jobs.empty())
 			{
-				GUILOG(Log_Error, "No files were found");
+				GUILOG(GUILog_Error, "No files were found");
 				processing = false;
 				return false;
 			}
 
-			GUILOG(Log_Info, "Packing file(s)...");
+			if (exiting) return false;
+
+			GUILOG(GUILog_Info, "Packing file(s)...");
 
 			std::vector<bool> tasks_completed(jobs.size(), false);
 
@@ -1574,14 +1674,21 @@ bool GUI::run_command(bool pack, bool unpack)
 				
 				thread_pool.push([this, cmd, id, i, &tasks_completed, &jobs](int)
 				{
-					std::string out, warn, err;
-					int err_code = Process::RunConvertProcess(cmd, out, warn, err, id);
-					
+					if (exiting)
+					{
+						tasks_completed[i] = true;
+						return;
+					}
+
+					std::list<std::pair<uint32_t, std::string>> cli_logs;
+					int err_code = Process::RunConvertProcess(cmd, cli_logs, id);
+
 					log_mutex.lock();
-					if (err_code != 0 && err.empty())	GUILOG(Log_ConvError, "An unhandled error caused packing " + jobs[i][0] + " to fail")
-					if (!err.empty())					GUILOG(Log_ConvError, err);
-					if (!warn.empty())					GUILOG(Log_ConvWarn, warn);
-					if (err_code == 0 && !out.empty())	GUILOG(Log_ConvInfo, out);
+					if (err_code != 0 && !has_cli_err(cli_logs))
+					{
+						GUILOG(GUILog_ConvError, "An unhandled error caused packing " + jobs[i][0] + " to fail")
+					}
+					add_cli_logs(logs, cli_logs);
 					log_mutex.unlock();
 
 					tasks_completed[i] = true;
@@ -1599,32 +1706,32 @@ bool GUI::run_command(bool pack, bool unpack)
 			std::string arc_path, file_name;
 			VBFUtils::Separate(unmodified_mod_path, arc_path, file_name);
 			FileBrowser::ArchiveRecord* arc_rec = &browser.archives.find(arc_path)->second;
-			const VBFArchive::TreeNode* node = arc_rec->archive.find_node(file_name);
+			VBFArchive::TreeNode* node = arc_rec->archive.find_node(file_name);
 
-			std::stringstream err_stream;
-			std::streambuf* old_cerr = gbl_err.ostream->rdbuf(err_stream.rdbuf());
+			GlobalLogger::direct_to_sstream();
 
-			GUILOG(Log_Info, "Injecting files into vbf - " + arc_path);
+			GUILOG(GUILog_KeyInfo, "Injecting files into vbf - " + arc_path);
 
-			if (!arc_rec->archive.inject_all(tmp_dst_dir, *node))
+			if (!arc_rec->archive.inject_all(*node, tmp_dst_dir, &exiting) && !exiting)
 			{
-				gbl_err.ostream->rdbuf(old_cerr);
-				GUILOG(Log_Error, err_stream.str());
-				GUILOG(Log_Error, "Failed to inject into " + arc_path);
-				std::filesystem::remove_all(tmp_dst_dir);
-				processing = false;
-				return false;
+				GUILOG(GUILog_Error, GlobalLogger::sstream.str());
+				GUILOG(GUILog_Error, "Failed to inject into " + arc_path);
+				GlobalLogger::sstream.clear();
 			}
+			GUILOG(GUILog_Info, GlobalLogger::sstream.str());
+			GlobalLogger::sstream.str("");
+
+			GUILOG(GUILog_Info, "Updating VBF header");
 			if (!arc_rec->archive.update_header())
 			{
-				gbl_err.ostream->rdbuf(old_cerr);
-				GUILOG(Log_Error, err_stream.str());
-				GUILOG(Log_Error, "Failed to update vbf header of " + arc_path);
+				GUILOG(GUILog_Error, GlobalLogger::sstream.str());
+				GUILOG(GUILog_Error, "Failed to update vbf header of " + arc_path);
+				GlobalLogger::direct_to_file();
 				std::filesystem::remove_all(tmp_dst_dir);
 				processing = false;
 				return false;
 			}
-			gbl_err.ostream->rdbuf(old_cerr);
+			GlobalLogger::direct_to_file();
 			std::filesystem::remove_all(tmp_dst_dir);
 			tmp_dst_dir = "";
 		}
@@ -1635,7 +1742,7 @@ bool GUI::run_command(bool pack, bool unpack)
 		}
 
 		processing = false;
-		GUILOG(Log_Info, "Processing Complete.");
+		GUILOG(GUILog_KeyInfo, "Processing Complete.");
 
 		return true;
 	});

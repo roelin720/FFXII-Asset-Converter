@@ -206,7 +206,7 @@ namespace Linking
 
             if (group_load_type >= _countof(loaders<LinkType>))
             {
-                gbl_err << "Unrecognised group object link loading type: " << (int)group_load_type << std::endl;
+                LOG(ERR) << "Unrecognised group object link loading type: " << (int)group_load_type << std::endl;
                 return false;
             }
             if (!loaders<LinkType>[group_load_type](stream, set_parent_obj_ID<LinkType>, context, link_it))
@@ -236,7 +236,7 @@ namespace Linking
 
             if (load_type >= _countof(loaders<LinkType>))
             {
-                gbl_err << "Unrecognised object link loading type: " << load_type << std::endl;
+                LOG(ERR) << "Unrecognised object link loading type: " << load_type << std::endl;
                 return false;
             }
             
@@ -247,7 +247,7 @@ namespace Linking
         }
         if (link_it != links.end())
         {
-            gbl_err << "Failed to fill all link data" << std::endl;
+            LOG(ERR) << "Failed to fill all link data" << std::endl;
             return false;
         }
         return true;
@@ -264,7 +264,7 @@ namespace Linking
             link_group.offset = stream.tellg();
             if (!Linking::load_links<LinkType>(stream, link_group, object_blocks[i]))
             {
-                gbl_err << "Failed to read " << link_group.name <<  " links" << std::endl;
+                LOG(ERR) << "Failed to read " << link_group.name <<  " links" << std::endl;
                 return false;
             }
             link_group.storage_size = stream.tellg() - link_group.offset;
@@ -365,7 +365,7 @@ bool LoadObjectBlocks(std::istream& stream, std::vector<ObjectBlock>& object_blo
     catch (const std::exception& e)
     {
         const auto ec = std::error_code{ errno, std::system_category() };
-        gbl_err << "ERROR: " << e.what() << " " << ec.message() << std::endl;
+        LOG(ERR) << "ERROR: " << e.what() << " " << ec.message() << std::endl;
         return false;
     }
     return true;
@@ -423,7 +423,7 @@ bool ModifyBlockData(std::ostream& ostream, std::istream& istream, PhyreHeader& 
     catch (const std::exception& e)
     {
         const auto ec = std::error_code{ errno, std::system_category() };
-        gbl_err << "ERROR: " << e.what() << " " << ec.message() << std::endl;
+        LOG(ERR) << "ERROR: " << e.what() << " " << ec.message() << std::endl;
         return false;
     }
     return true;
@@ -547,7 +547,7 @@ bool ModifyBlockLinks(std::ostream& ostream, std::istream& istream, PhyreHeader&
     catch (const std::exception& e)
     {
         const auto ec = std::error_code{ errno, std::system_category() };
-        gbl_err << "ERROR: " << e.what() << " " << ec.message() << std::endl;
+        LOG(ERR) << "ERROR: " << e.what() << " " << ec.message() << std::endl;
         return false;
     }
     return true;
@@ -580,7 +580,7 @@ bool ModifyBlockHeaders(std::ostream& ostream, const PhyreHeader& header, std::v
     catch (const std::exception& e)
     {
         const auto ec = std::error_code{ errno, std::system_category() };
-        gbl_err << "ERROR: " << e.what() << " " << ec.message() << std::endl;
+        LOG(ERR) << "ERROR: " << e.what() << " " << ec.message() << std::endl;
         return false;
     }
     return true;
@@ -605,7 +605,7 @@ void ObjectBlock::save_data_bytes(std::istream& stream, const std::string& file_
     }
     catch (const std::exception& e)
     {
-        gbl_err << "Failed to save_data_bytes on " << name << " - " << e.what(); 
+        LOG(ERR) << "Failed to save_data_bytes on " << name << " - " << e.what(); 
     }
 }
 
@@ -631,7 +631,7 @@ void ObjectBlock::save_elem_bytes(std::istream& stream, const std::string& file_
     }
     catch (const std::exception& e)
     {
-        gbl_err << "Failed to save_data_bytes on " << name << " - " << e.what();
+        LOG(ERR) << "Failed to save_data_bytes on " << name << " - " << e.what();
     }
 }
 

@@ -1,4 +1,5 @@
 #pragma once
+#include <DirectXTex/DirectXTex.h>
 #include "FileStructs.h"
 #include "FileObjectBlock.h"
 #include "FileIOUtils.h"
@@ -28,8 +29,10 @@ public:
     DXGI_FORMAT dxgi_format = DXGI_FORMAT_UNKNOWN;
     std::vector<char> dds_pixel_data;
 
+    bool to_image(DirectX::ScratchImage& image) const;
+
     bool unpack(const std::string& orig_texture_path);
-    bool save(const std::string& intr_texture_path);
+    bool save(const std::string& intr_texture_path) const;
     bool apply(const std::string& intr_texture_path);
-    bool pack(const std::string& mod_texture_path, const std::string& orig_texture_path);
+    bool pack(const std::string& mod_texture_path, const std::string& orig_texture_path) const;
 };

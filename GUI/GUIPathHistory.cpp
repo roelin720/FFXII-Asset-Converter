@@ -48,7 +48,7 @@ void PathHistory::save()
 	}
 	catch (std::exception& e)
 	{
-		gbl_err << "Failed to save input history " << std::string(e.what());
+		LOG(ERR) << "Failed to save input history " << std::string(e.what());
 	}
 }
 
@@ -124,7 +124,7 @@ void PathHistory::load()
 	}
 	catch (std::exception& e)
 	{
-		gbl_err << "Failed to load input data " << std::string(e.what()) << std::endl;
+		LOG(ERR) << "Failed to load input data " << std::string(e.what()) << std::endl;
 	}
 }
 int PathHistory::scroll_callback(ImGuiInputTextCallbackData* _data, PathID pathID)

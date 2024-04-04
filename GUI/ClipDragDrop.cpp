@@ -71,14 +71,14 @@ HRESULT ClipDragDrop::RunDragDrop(FileBrowser& browser, bool left_click)
 		tmp_dir = IO::CreateTmpPath("tmp_vbf_drag_drop");
 		if (tmp_dir.empty())
 		{
-			gbl_err << "Failed to create temp path" << tmp_dir << std::endl;
+			LOG(ERR) << "Failed to create temp path" << tmp_dir << std::endl;
 			return DRAGDROP_S_CANCEL;
 		}
 
 		std::string arc_path, arc_asset_path;
-		if (!VBFUtils::Separate(cur_folder_str, arc_path, arc_asset_path))
+		if (!VBFUtils::Separate(cur_folder_str + "/" + browser.cur_filename, arc_path, arc_asset_path))
 		{
-			gbl_err << "current path into vbf is invalid" << std::endl;
+			LOG(ERR) << "current path into vbf is invalid" << std::endl;
 			return DRAGDROP_S_CANCEL;
 		}
 
@@ -86,7 +86,7 @@ HRESULT ClipDragDrop::RunDragDrop(FileBrowser& browser, bool left_click)
 			find != browser.archives.end() &&
 			find->second.loaded &&
 			find->second.valid
-			) {
+		) {
 			vbf = &find->second.archive;
 		}
 		else return DRAGDROP_S_CANCEL;
@@ -94,7 +94,7 @@ HRESULT ClipDragDrop::RunDragDrop(FileBrowser& browser, bool left_click)
 		node = vbf->find_node(arc_asset_path);
 		if (node == nullptr)
 		{
-			gbl_err << "current path into vbf is invalid" << std::endl;
+			LOG(ERR) << "current path into vbf is invalid" << std::endl;
 			return DRAGDROP_S_CANCEL;
 		}
 

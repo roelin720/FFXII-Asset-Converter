@@ -32,7 +32,7 @@ void VBFExtractClipHelper::GatherFilePaths(std::list<std::pair<const VBFArchive:
 {
 	std::string path = parent_path + "/" + node->name_segment;
 
-	if (node->children.empty())
+	if (node->children.empty() && node->file)
 	{
 		file_paths.push_back({ node, path });
 	}
@@ -49,6 +49,9 @@ void VBFExtractClipHelper::GatherFilePaths(std::list<std::pair<const VBFArchive:
 
 bool VBFExtractClipHelper::perform_extractions()
 {
+	std::mutex name_list_mutex; //for later
+	std::mutex size_mutex; //for later
+
 	try
 	{
 		reset();
@@ -57,7 +60,7 @@ bool VBFExtractClipHelper::perform_extractions()
 		VBFArchive::TreeNode* node = nullptr;
 
 		if (!get_current_vbf_data(vbf, node) ||
-			!launch_progress_window("DropSourceProgress", 400, 100) ||
+			!launch_progress_window("DropSourceProgress", 600, 200) ||
 			!launch_progress_message_thread()
 		) {
 			browser.gui.alert("Failed to begin drag-drop extraction");
@@ -80,6 +83,12 @@ bool VBFExtractClipHelper::perform_extractions()
 			++i;
 		}
 
+		ctpl::thread_pool pool(5);
+		std::list<std::string> name_list;
+		constexpr int64_t size_cap = 2ll << 30; //2GB 
+		int64_t size = 0;
+
+		std::atomic<size_t> j = 0;
 		i = 0;
 		for (auto& path : paths_list)
 		{
@@ -87,25 +96,88 @@ bool VBFExtractClipHelper::perform_extractions()
 			{
 				update_progress("Cancelling drag-drop...", i, paths_list.size(), true);
 				post_progress();
+				pool.stop(false);
 				//don't call end up operation to keep message on screen until delete is called
 				return false;
 			}
 
-			update_progress("Extracting file:\n" + path.first->name_segment + "...", i, paths_list.size());
+			update_progress("Preparing thread pool...", i, paths_list.size());
 
-			if (!vbf->extract(path.first->full_name(), path.second))
+			pool.push([this, vbf, &path, &name_list, &name_list_mutex, &size_mutex, &j, &size](int id) 
 			{
-				gbl_log << "Failed to extact " << path.first->full_name() << std::endl;
-			}
+				char size_str_buffer[256] = {};
+				std::string size_str = StrFormatByteSize64A(path.first->file->data_size, size_str_buffer, sizeof(size_str_buffer));
+
+				while (true)
+				{
+					size_mutex.lock();
+					if (size < size_cap)
+					{
+						size += path.first->file->data_size;
+						size_mutex.unlock();
+						break;
+					}
+					size_mutex.unlock();
+					Sleep(250);
+				}
+
+				name_list_mutex.lock();
+				name_list.push_back(size_str + ": " + path.first->name_segment);
+				auto name_it = std::prev(name_list.end());
+				name_list_mutex.unlock();
+
+				if (!vbf->extract(*path.first->file, path.second))
+				{
+					LOG(ERR) << "Failed to extract " << path.first->full_name() << std::endl;
+				}
+
+				size_mutex.lock();
+				size -= path.first->file->data_size;
+				size_mutex.unlock();
+
+				name_list_mutex.lock();
+				name_list.erase(name_it);
+				name_list_mutex.unlock();
+				++j;
+			});
 			++i;
+		}
+
+		while (j < paths_list.size())
+		{
+			if (stop_operation)
+			{
+				update_progress("Cancelling drag-drop...", i, paths_list.size(), true);
+				post_progress();
+				pool.stop(false);
+				//don't call end up operation to keep message on screen until delete is called
+				return false;
+			}
+
+			std::string message = "Extracting file(s):";
+
+			name_list_mutex.lock();
+			for (auto& name : name_list)
+			{
+				message.push_back('\n');
+				message += name;
+			}
+			name_list_mutex.unlock();
+
+			update_progress(message, j, paths_list.size());
+
+			Sleep(100);
 		}
 
 		update_progress("Moving extracted files...", i, paths_list.size(), true);
 		//don't call end up operation to keep message on screen until delete is called
 	}
-	catch (std::exception& e)
+	catch (const std::exception& e)
 	{
 		handle_exception(e);
+		if (name_list_mutex.try_lock()) name_list_mutex.unlock();
+		if (size_mutex.try_lock()) size_mutex.unlock();
+		if (progress_mutex.try_lock()) progress_mutex.unlock();
 		return false;
 	}
 
@@ -133,6 +205,11 @@ bool VBFInjectClipHelper::perform_injections(const std::vector<std::wstring>& dr
 		){
 			browser.gui.alert("Failed to begin drag-drop injection");
 			return false;
+		}
+
+		if (!browser.cur_filename.empty())
+		{
+			node = node->parent;
 		}
 
 		struct DroppedFile
@@ -197,7 +274,7 @@ bool VBFInjectClipHelper::perform_injections(const std::vector<std::wstring>& dr
 			return false;
 		}
 
-		std::vector<std::pair<std::string, std::wstring>> file_map;
+		std::vector<std::pair<VBFArchive::File*, std::wstring>> file_map;
 		file_map.reserve(dropped_files.size());
 
 		i = 0;
@@ -208,9 +285,9 @@ bool VBFInjectClipHelper::perform_injections(const std::vector<std::wstring>& dr
 			update_progress("Finding corresponding vbf files...", i, dropped_files.size());
 
 			std::string asset_path = IO::Normalise(node->full_name() + "/" + file.stem);
-			if (vbf->find_file(asset_path) != nullptr)
+			if (VBFArchive::File* vbf_file = vbf->find_file(asset_path))
 			{
-				file_map.push_back({ asset_path, file.full_path });
+				file_map.push_back({ vbf_file, file.full_path });
 			}
 			++i;
 		}
@@ -228,9 +305,9 @@ bool VBFInjectClipHelper::perform_injections(const std::vector<std::wstring>& dr
 		{
 			if (stop_operation) break;
 
-			update_progress("Injecting asset:\n" + IO::FileName(mapping.first), i, file_map.size());
+			update_progress("Injecting asset:\n" + mapping.first->node->name_segment, i, file_map.size());
 
-			if (vbf->inject(mapping.first, mapping.second))
+			if (vbf->inject(*mapping.first, mapping.second))
 			{
 				++success_count;
 			}
@@ -248,6 +325,10 @@ bool VBFInjectClipHelper::perform_injections(const std::vector<std::wstring>& dr
 	catch (std::exception& e)
 	{
 		handle_exception(e);
+		if (progress_mutex.try_lock())
+		{
+			progress_mutex.unlock();
+		}
 		return false;
 	}
 
@@ -271,7 +352,7 @@ void VBFClipHelper::reset()
 
 bool VBFClipHelper::get_current_vbf_data(VBFArchive*& vbf, VBFArchive::TreeNode*& node)
 {
-	std::string cur_folder_str = IO::Join(browser.cur_parent_folder);
+	std::string cur_folder_str = IO::Join(browser.cur_parent_folder) + "/" + browser.cur_filename;
 
 	std::string arc_path, arc_asset_path;
 	if (!VBFUtils::Separate(cur_folder_str, arc_path, arc_asset_path))
@@ -305,10 +386,10 @@ bool VBFClipHelper::configure_progress_window_init(int width, int height)
 
 	window_init->hints[0] = { GLFW_DECORATED, GLFW_FALSE };
 	window_init->hints[1] = { GLFW_FLOATING, GLFW_TRUE };
-	window_init->parent_window = browser.window;
+	window_init->parent_window = browser.hwnd;
 
 	RECT parent_rect;
-	if (!GetWindowRect(browser.window, &parent_rect))
+	if (!GetWindowRect(browser.hwnd, &parent_rect))
 	{
 		return false;
 	}
@@ -457,6 +538,6 @@ void VBFClipHelper::end_operation()
 void VBFClipHelper::handle_exception(const std::exception& e)
 {
 	std::string error_message = std::string("Error occured when dropping files - ") + e.what();
-	gbl_err << error_message << std::endl;
+	LOG(ERR) << error_message << std::endl;
 	browser.gui.alert(error_message);
 }

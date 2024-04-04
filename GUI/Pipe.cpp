@@ -7,7 +7,7 @@ bool PipeServer::create(const std::string& name, uint32_t buffer_size)
     this->name = name;
     this->buffer_size = buffer_size;
 
-    gbl_log << "Opening pipe " << name << std::endl;
+    LOG(INFO) << "Opening pipe " << name << std::endl;
 
     SECURITY_ATTRIBUTES saAttr = {};
 
@@ -19,6 +19,8 @@ bool PipeServer::create(const std::string& name, uint32_t buffer_size)
         PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
         PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
         1, buffer_size, buffer_size, 1000, &saAttr);
+
+    SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
 
     if (handle == INVALID_HANDLE_VALUE)
     {
@@ -49,7 +51,7 @@ void PipeServer::close()
     Pipe::close();
 }
 
-std::string Pipe::make_ID()
+std::string Pipe::make_ID() const
 {
     return "\\\\.\\pipe\\" + name;
 }
@@ -76,7 +78,7 @@ bool Pipe::write(const char* data, size_t size)
 
     if (!success || bytes_written != size)
     {
-        gbl_err << "Failed to write to pipe" << name << std::endl;
+        LOG(ERR) << "Failed to write to pipe" << name << std::endl;
         return false;
     }
     return true;
@@ -87,9 +89,9 @@ bool Pipe::read(char* data, size_t size)
     DWORD bytes_read = 0;
     bool success = ReadFile(handle, data, (DWORD)size, &bytes_read, NULL);
 
-    if (!success || bytes_read != size)
+    if ((!success && GetLastError() != ERROR_MORE_DATA) || bytes_read != size)
     {
-        gbl_err << "Failed to read from pipe" << name << std::endl;
+        LOG(ERR) << "Failed to read from pipe" << name << std::endl;
         return false;
     }
 
@@ -141,20 +143,20 @@ Pipe::~Pipe()
     close();
 }
 
-bool PipeClient::open(const std::string& name)
+bool PipeClient::open(const std::string& name, uint32_t timeout)
 {
     this->name = name;
 
     int attempts = 3;
     while (attempts --> 0)
     {
-        if (WaitNamedPipeA(TEXT(make_ID().c_str()), NMPWAIT_USE_DEFAULT_WAIT) == false)
+        if (WaitNamedPipeA(TEXT(make_ID().c_str()), timeout) == false)
         {
-            gbl_err << "Could not open pipe " << name << ": wait timed out";
+            LOG(ERR) << "Could not open pipe " << name << ": wait timed out";
             return false;
         }
-        handle = CreateFileA(make_ID().c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
-
+        handle = CreateFileA(make_ID().c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        
         if (handle != INVALID_HANDLE_VALUE)
         {
             break;
@@ -162,13 +164,13 @@ bool PipeClient::open(const std::string& name)
 
         if (GetLastError() != ERROR_PIPE_BUSY)
         {
-            gbl_err << "Could not open pipe " << name << std::endl;
+            LOG(ERR) << "Could not open pipe " << name << std::endl;
             return false;
         }
     }
     if (attempts < 0)
     {
-        gbl_err << "Failed to open pipe " << name << " after several attempts" << std::endl;
+        LOG(ERR) << "Failed to open pipe " << name << " after several attempts" << std::endl;
         return false;
     }
 

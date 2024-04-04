@@ -1,4 +1,4 @@
-FFXII Asset Converter version 2.0.1 by Roelin hosted by Nexus
+FFXII Asset Converter version 2.1.1 by Roelin hosted by Nexus
 	This is a mod development tool to convert FFXII models and textures to and from common formats.
 	HD texture formats can be produced, meshes can be completely remodelled and assets can be injected directly to and from the VBF, all with ease and haste.
 	A command line and GUI version of the tool are available.
@@ -12,7 +12,7 @@ Important Notes:
 UPDATE 2.0.0:
 	(for more information, caveats and explanations, consult the "Details" section below.)
 	New conversion features:
-		Map models are now supported.
+		Map models are now supported, including morphing animations.
 		Textures can now be automatically loaded for a mesh and assigned to it's materials.
 		Unlimited bone (vertex group) assignment to meshes.
 		The scene graph is now loaded (nodes, their names, hierarchy and transforms), and node transforms are saved.
@@ -46,7 +46,7 @@ USAGE:
 		example: FFXIIConvert.exe pack folder1/c1004.dae.phyre folder2/c1004.fbx folder3/new_c1004.dae.phyre
 	
 	GUI:
-		Hopefully the usage of the GUI is intuitive. It mostly functions as a wrapper over the command line tool, but has some extended features, most notably in the file browser that provides a seamless transition from the native file browser to inside the VBF. Dragging and dropping is fully supported between the native file browser and this GUI, even to and from inside the VBF. The file browser is accessed by clicking a file or folder icons for selecting asset paths.
+		Hopefully the usage of the GUI is intuitive. It mostly functions as a wrapper over the command line tool, but has some extended features, most notably in the file browser that provides a seamless transition from the native file browser to inside the VBF. Dragging and dropping is fully supported between the native file browser and this GUI, even to and from inside the VBF. The file browser is accessed by clicking a file/folder button for selecting asset paths.
 		Play Options:
 		To hasten the edit-to-testing pipeline further, you can launch the game directly from the GUI after supplying it with the exe directory via the "play" buttons on the right.
 		In addition, There's a button to mute the game remotely, because I find the intro song to get grating after so many tests.
@@ -67,13 +67,16 @@ DETAILS:
 		No material information is saved to the mod output at the moment.
 	
 	Models:
-	Bones:
-		There used to be a limit on the number of bones assignable to a mesh, but no longer. There must however, be at least one bone reference by a mesh if it originally referenced bones, which also must be one of the influencing bones of the original skeleton (For example, usually not the root bone). If the mesh originally referenced bones, it cannot do so once modified.
+		Bones:
+			There used to be a limit on the number of bones assignable to a mesh, but no longer. There must however, be at least one bone reference by a mesh if it originally referenced bones, and the bone must have originally been referenced by at least one mesh (For example, usually not the root bone). If the mesh originally referenced bones, it cannot do so once modified.
+			Vertices:
+			There is no known upper limit to the amount of vertices a mesh has, so please test frequently to see if the game will be ok with it, lest you get a "broken game data" error message from the game. Also please make sure your meshes are triangulated just in case any unexpected errors occur. 
 		Vertices:
-		There is no known upper limit to the amount of vertices a mesh has, so please test frequently to see if the game will be ok with it, lest you get a "broken game data" error message from the game. Also please make sure your meshes are triangulated just in case any unexpected errors occur. 
-	Scene-Graph:
-		In order for meshes to properly load, the names and hierarchical structure of the nodes in the scene graph must stay the same, or the tool won't be able to find the meshes that correspond with them. The positions, scale and rotations of the nodes are also saved to the mod file.
-
+			There is no known upper limit to the amount of vertices a mesh has, so please test frequently to see if the game will be ok with it, lest you get a "broken game data" error message from the game. Also please make sure your meshes are triangulated just in case any unexpected errors occur. 
+		Scene-Graph:
+			In order for meshes to properly load, the names and hierarchical structure of the nodes in the scene graph must stay the same, or the tool won't be able to find the meshes that correspond with them. The positions, scale and rotations of the nodes are also saved to the mod file.
+		Morphing-Animations:
+			Some models, particularly those in models, use morphing animations/shape keys in order to create minor animations, thus, editing a mesh's primary vertices won't actually alter mesh in-game. The shape keys need to be modified instead. Here is an example: https://i.imgur.com/YX4UjvP.png
 TIPS:
 	Blend mode:
 		The default blend mode in blender might make semi-opaque/translucent models difficult to see properly, so I suggest running either of the following scripts in Blender:

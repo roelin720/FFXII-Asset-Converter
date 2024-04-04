@@ -21,16 +21,17 @@
 
 namespace fs = std::filesystem;
 
-GlobalStream gbl_log(&std::cout);
-GlobalStream gbl_warn(&std::cout);
-GlobalStream gbl_err(&std::cout);
+FILE* GlobalLogger::file = stdout;
+std::stringstream GlobalLogger::sstream;
+bool GlobalLogger::to_file = true;
+GlobalLogger GlobalLoggers::InfoLogger(0);
+GlobalLogger GlobalLoggers::KeyInfoLogger(1);
+GlobalLogger GlobalLoggers::SuccessLogger(2);
+GlobalLogger GlobalLoggers::WarningLogger(3);
+GlobalLogger GlobalLoggers::ErrorLogger(4);
 
 namespace
 {
-    std::streambuf* old_gbl_log;
-    std::streambuf* old_gbl_warn;
-    std::streambuf* old_gbl_err;
-
     typedef BOOL(WINAPI* MINIDUMPWRITEDUMP)(HANDLE hProcess, DWORD dwPid, HANDLE hFile, MINIDUMP_TYPE DumpType, CONST PMINIDUMP_EXCEPTION_INFORMATION ExceptionParam, CONST PMINIDUMP_USER_STREAM_INFORMATION UserStreamParam, CONST PMINIDUMP_CALLBACK_INFORMATION CallbackParam);
 
     void create_minidump(struct _EXCEPTION_POINTERS* apExceptionInfo)
@@ -60,9 +61,14 @@ namespace
         std::list<std::array<std::string, 2>> jobs;
 
         if (!IO::VerifyFileAccessible(orig_path) ||
-            !IO::VerifyDifferent(orig_path, intr_path) ||
             !IO::VerifyParentFolderAccessible(intr_path))
         {
+            return false;
+        }
+
+        if (intr_path.ends_with("dds.phyre") || intr_path.ends_with("dae.phyre"))
+        {
+            LOG(ERR) << "intermediary_asset file type is invalid for conversion " << intr_path << std::endl;
             return false;
         }
 
@@ -97,7 +103,8 @@ namespace
         }
         else
         {
-            if (!IO::VerifyHeader(orig_path))
+            if (!IO::VerifyHeader(orig_path) ||
+                !IO::VerifyDifferent(orig_path, intr_path))
             {
                 return false;
             }
@@ -105,7 +112,7 @@ namespace
             std::string ext = IO::GetExtension(orig_path);
             if (ext != "dae.phyre" && ext != "dds.phyre")
             {
-                gbl_err << "Unrecognised extension for file " << orig_path << std::endl;
+                LOG(ERR) << "Unrecognised extension for file " << orig_path << std::endl;
                 return false;
             }
 
@@ -114,7 +121,7 @@ namespace
 
         if (unpack_refs)
         {
-            gbl_log << "Evaluating asset references" << std::endl;
+            LOG(INFO) << "Evaluating asset references" << std::endl;
 
             std::map<std::string, std::string> ref_file_unpack_map;
 
@@ -129,7 +136,7 @@ namespace
 
                 if (!IO::FindLocalReferences(ref_name_id_map, job[0]))
                 {
-                    gbl_err << "Found no *.ah file near " << job[0] << " to unpack texture references" << std::endl;
+                    LOG(ERR) << "Found no *.ah file near " << job[0] << " to unpack texture references" << std::endl;
                     continue;
                 }
                 IO::EvaluateReferencesFromLocalSearch(ref_name_file_map, ref_name_id_map, job[0], "dds.phyre");
@@ -153,7 +160,7 @@ namespace
                 }
             }
 
-            gbl_log << "Unpacking asset references" << std::endl;
+            LOG(INFO) << "Unpacking asset references" << std::endl;
 
             for (const auto& file_unpack : ref_file_unpack_map)
             {
@@ -191,9 +198,9 @@ namespace
             if (ext == "dae.phyre" && ConverterInterface::UnpackDAE(job[0], job[1]) == false ||
                 ext == "dds.phyre" && ConverterInterface::UnpackDDS(job[0], job[1]) == false
             )
-                gbl_err << "FAILURE unpacking to " << IO::BranchFromPath(job[1], job[0]) << std::endl;
+                LOG(ERR) << "FAILURE unpacking to " << IO::BranchFromPath(job[1], job[0]) << std::endl;
             else
-                gbl_log << "Success unpacking to " << IO::BranchFromPath(job[1], job[0]) << std::endl;
+                LOG(SUCCESS) << "Success unpacking to " << IO::BranchFromPath(job[1], job[0]) << std::endl;
         }
 
         return true;
@@ -211,11 +218,17 @@ namespace
             return false;
         }
 
+        if (intr_path.ends_with("dds.phyre") || intr_path.ends_with("dae.phyre"))
+        {
+            LOG(ERR) << "intermediary_asset file type is invalid for conversion " << intr_path << std::endl;
+            return false;
+        }
+
         if (IO::IsDirectory(orig_path))
         {
             if (!IO::IsDirectory(intr_path))
             {
-                gbl_err << "intermediary_asset folder path is not a directory " << intr_path << std::endl;
+                LOG(ERR) << "intermediary_asset folder path is not a directory " << intr_path << std::endl;
                 return false;
             }
             if (!IO::CopyFolderHierarchy(mod_path, orig_path))
@@ -251,7 +264,7 @@ namespace
 
             if (!any_match_found)
             {
-                gbl_warn << "Found no corresponding files across each folder" << std::endl;
+                LOG(WARN) << "Found no corresponding files across each folder" << std::endl;
             }
         }
         else
@@ -259,7 +272,7 @@ namespace
 
             if (IO::IsDirectory(intr_path))
             {
-                gbl_err << "intermediary_asset asset path is a directory, but the original_asset_path is a file" << intr_path << std::endl;
+                LOG(ERR) << "intermediary_asset asset path is a directory, but the original_asset_path is a file" << intr_path << std::endl;
                 return false;
             }
 
@@ -271,7 +284,7 @@ namespace
             std::string ext = IO::GetExtension(orig_path);
             if (ext != "dae.phyre" && ext != "dds.phyre")
             {
-                gbl_err << "Unrecognised extension for file " << orig_path << std::endl;
+                LOG(ERR) << "Unrecognised extension for file " << orig_path << std::endl;
                 return false;
             }
 
@@ -284,9 +297,9 @@ namespace
             if (ext == "dae.phyre" && ConverterInterface::PackDAE(job[0], job[1], job[2]) == false ||
                 ext == "dds.phyre" && ConverterInterface::PackDDS(job[0], job[1], job[2]) == false
             )
-                gbl_err << "FAILURE packing to " << IO::BranchFromPath(job[2], job[0]) << std::endl;
+                LOG(ERR) << "FAILURE packing to " << IO::BranchFromPath(job[2], job[0]) << std::endl;
             else
-                gbl_log << "Success packing to " << IO::BranchFromPath(job[2], job[0]) << std::endl;
+                LOG(SUCCESS) << "Success packing to " << IO::BranchFromPath(job[2], job[0]) << std::endl;
         }
 
         return true;
@@ -299,7 +312,7 @@ bool ConverterInterface::Initialise()
 
     if ((CoInitializeEx(NULL, COINIT_MULTITHREADED)) < 0) //needed for DirectXTex
     {
-        gbl_err << "COINIT_MULTITHREADED failed " << std::endl;
+        LOG(ERR) << "COINIT_MULTITHREADED failed " << std::endl;
         return false;
     }
 
@@ -313,8 +326,8 @@ void ConverterInterface::Free()
 
 bool ConverterInterface::UnpackDAE(const std::string& original_path, const std::string& intermediary_path)
 {
-    gbl_log << "Unpacking " << IO::FileName(original_path) << std::endl;
-    gbl_log << "(1) Importing " << IO::FileName(original_path) << std::endl;
+    LOG(INFO) << "Unpacking " << IO::FileName(original_path) << std::endl;
+    LOG(INFO) << "(1) Importing " << IO::FileName(original_path) << std::endl;
 
     Scene scene;
     aiScene aScene;
@@ -325,12 +338,12 @@ bool ConverterInterface::UnpackDAE(const std::string& original_path, const std::
         return false;
     }
 
-    gbl_log << "(2) Exporting " << IO::FileName(intermediary_path) << std::endl;
+    LOG(INFO) << "(2) Exporting " << IO::FileName(intermediary_path) << std::endl;
 
     Assimp::Exporter exporter;
     if (aiReturn ret = exporter.Export(&aScene, IO::GetLastExtension(intermediary_path), intermediary_path, 0))
     {
-        gbl_err << "Export Error: " << exporter.GetErrorString() << std::endl;
+        LOG(ERR) << "Export Error: " << exporter.GetErrorString() << std::endl;
         IO::CancelWrite(intermediary_path);
         return false;
     }
@@ -340,50 +353,8 @@ bool ConverterInterface::UnpackDAE(const std::string& original_path, const std::
 
 bool ConverterInterface::PackDAE(const std::string& original_path, const std::string& intermediary_path, const std::string& mod_output_path)
 {
-    gbl_log << "Packing " << IO::FileName(original_path) << std::endl;
-    gbl_log << "(1) Importing " << IO::FileName(intermediary_path) << std::endl;
-
-    constexpr auto clear_unused_bones = [](aiScene& scene)
-    {
-        for (uint32_t i = 0; i < scene.mNumMeshes; ++i)
-        {
-            aiMesh* aSubmesh = scene.mMeshes[i];
-
-            if (aSubmesh->HasBones())
-            {
-                std::vector<uint32_t> used_local_bone_ids;
-                used_local_bone_ids.reserve(aSubmesh->mNumBones);
-
-                uint32_t old_bone_count = aSubmesh->mNumBones;
-                aiBone** old_bones = aSubmesh->mBones;
-
-                for (uint32_t j = 0; j < old_bone_count; ++j)
-                {
-                    const aiBone* aBone = old_bones[j];
-
-                    if (aBone->mNumWeights > 0)
-                    {
-                        used_local_bone_ids.push_back(j);
-                    }
-                }
-
-                aSubmesh->mNumBones = used_local_bone_ids.size();
-                aSubmesh->mBones = new aiBone * [used_local_bone_ids.size()];
-
-                for (uint32_t j = 0; j < used_local_bone_ids.size(); ++j)
-                {
-                    aSubmesh->mBones[j] = old_bones[used_local_bone_ids[j]];
-                    old_bones[used_local_bone_ids[j]] = nullptr;
-                }
-
-                for (uint32_t j = 0; j < old_bone_count; ++j)
-                {
-                    delete old_bones[j];
-                }
-                delete[] old_bones;
-            }
-        }
-    };
+    LOG(INFO) << "Packing " << IO::FileName(original_path) << std::endl;
+    LOG(INFO) << "(1) Importing " << IO::FileName(intermediary_path) << std::endl;
 
     uint32_t import_flags = aiProcess_CalcTangentSpace | aiProcess_Triangulate;
 
@@ -391,12 +362,11 @@ bool ConverterInterface::PackDAE(const std::string& original_path, const std::st
     const aiScene* intr_scene = intermediary_importer.ReadFile(intermediary_path, import_flags);
     if (!intr_scene)
     {
-        gbl_err << "Failed to import intermediary scene " << intermediary_path << " " << (intermediary_importer.GetErrorString()) << std::endl;
+        LOG(ERR) << "Failed to import intermediary scene " << intermediary_path << " " << (intermediary_importer.GetErrorString()) << std::endl;
         return false;
     }
-    clear_unused_bones(*(aiScene*)intr_scene);
 
-    gbl_log << "(2) Importing " << IO::FileName(original_path) << std::endl;
+    LOG(INFO) << "(2) Importing " << IO::FileName(original_path) << std::endl;
 
     Scene scene;
     if (!scene.unpack(original_path))
@@ -404,14 +374,15 @@ bool ConverterInterface::PackDAE(const std::string& original_path, const std::st
         return false;
     }
 
-    gbl_log << "(3) Applying " << IO::FileName(intermediary_path) << " To " << IO::FileName(original_path) << std::endl;
+    LOG(INFO) << "(3) Applying " << IO::FileName(intermediary_path) << " To " << IO::FileName(original_path) << std::endl;
 
+    AssimpConversion::ClearUnusedBones(*(aiScene*)intr_scene);
     if (!AssimpConversion::ConvertFromAssimpScene(*intr_scene, scene))
     {
         return false;
     }
 
-    gbl_log << "(4) Exporting " << IO::FileName(mod_output_path) << std::endl;
+    LOG(INFO) << "(4) Exporting " << IO::FileName(mod_output_path) << std::endl;
 
     if (!scene.pack(mod_output_path, original_path))
     {
@@ -424,8 +395,8 @@ bool ConverterInterface::PackDAE(const std::string& original_path, const std::st
 
 bool ConverterInterface::UnpackDDS(const std::string& original_path, const std::string& intermediary_path)
 {
-    gbl_log << "Unpacking " << IO::FileName(original_path) << std::endl;
-    gbl_log << "(1) Importing " << IO::FileName(original_path) << std::endl;
+    LOG(INFO) << "Unpacking " << IO::FileName(original_path) << std::endl;
+    LOG(INFO) << "(1) Importing " << IO::FileName(original_path) << std::endl;
 
     Texture2D texture;
     if (!texture.unpack(original_path))
@@ -433,7 +404,7 @@ bool ConverterInterface::UnpackDDS(const std::string& original_path, const std::
         return false;
     }
 
-    gbl_log << "(2) Exporting " << IO::FileName(intermediary_path) << std::endl;
+    LOG(INFO) << "(2) Exporting " << IO::FileName(intermediary_path) << std::endl;
 
     if(!texture.save(intermediary_path))
     {
@@ -446,8 +417,8 @@ bool ConverterInterface::UnpackDDS(const std::string& original_path, const std::
 
 bool ConverterInterface::PackDDS(const std::string& original_path, const std::string& intermediary_path, const std::string& mod_output_path)
 {
-    gbl_log << "Packing " << IO::FileName(original_path) << std::endl;
-    gbl_log << "(1) Importing " << IO::FileName(original_path) << std::endl;
+    LOG(INFO) << "Packing " << IO::FileName(original_path) << std::endl;
+    LOG(INFO) << "(1) Importing " << IO::FileName(original_path) << std::endl;
 
     Texture2D texture;
     if (!texture.unpack(original_path))
@@ -455,14 +426,14 @@ bool ConverterInterface::PackDDS(const std::string& original_path, const std::st
         return false;
     }
 
-    gbl_log << "(2) Applying " << IO::FileName(intermediary_path) << " To " << IO::FileName(original_path) << std::endl;
+    LOG(INFO) << "(2) Applying " << IO::FileName(intermediary_path) << " To " << IO::FileName(original_path) << std::endl;
 
     if (!texture.apply(intermediary_path))
     {
         return false;
     }
 
-    gbl_log << "(3) Exporting " << IO::FileName(mod_output_path) << std::endl;
+    LOG(INFO) << "(3) Exporting " << IO::FileName(mod_output_path) << std::endl;
 
     if (!texture.pack(mod_output_path, original_path))
     {
@@ -530,7 +501,7 @@ bool ConverterInterface::Run(int argc, const char** argv)
         {
             if (unpack.values().size() != 2)
             {
-                gbl_err << "Incorrect number of unpack arguments (expected 2, recieved " << unpack.values().size() << ")" << std::endl;
+                LOG(ERR) << "Incorrect number of unpack arguments (expected 2, recieved " << unpack.values().size() << ")" << std::endl;
                 return false;
             }
             orig_path = fs::absolute(IO::Normalise(unpack.values()[0])).string();
@@ -541,7 +512,7 @@ bool ConverterInterface::Run(int argc, const char** argv)
         {
             if (pack.values().size() != 3)
             {
-                gbl_err << "Incorrect number of pack arguments (expected 3, recieved " << pack.values().size() << ")" << std::endl;
+                LOG(ERR) << "Incorrect number of pack arguments (expected 3, recieved " << pack.values().size() << ")" << std::endl;
                 return false;
             }
             orig_path = fs::absolute(IO::Normalise(pack.values()[0])).string();
@@ -554,42 +525,39 @@ bool ConverterInterface::Run(int argc, const char** argv)
             std::string vbf_path, vbf_file_name;
             if (!VBFUtils::Separate(orig_path, vbf_path, vbf_file_name))
             {
-                gbl_err << "Failed to deduce archive paths for " << orig_path << std::endl;
+                LOG(ERR) << "Failed to deduce archive paths for " << orig_path << std::endl;
                 return false;
             }
-            gbl_log << "Loading vbf " << vbf_path << std::endl;
+            LOG(INFO) << "Loading vbf " << vbf_path << std::endl;
 
             VBFArchive vbf;
             if (!vbf.load(vbf_path))
             {
-                gbl_err << "Failed to load" << vbf_path << std::endl;
+                LOG(ERR) << "Failed to load" << vbf_path << std::endl;
                 return false;
             }
             VBFArchive::TreeNode* node = vbf.find_node(vbf_file_name);
             if (node == nullptr)
             {
-                gbl_err << "Failed to find file/folder in vbf - " << vbf_file_name << std::endl;
+                LOG(ERR) << "Failed to find file/folder in vbf - " << vbf_file_name << std::endl;
                 return false;
             }
 
-            gbl_log << "Extracting vbf files" << std::endl;
+            LOG(INFO) << "Extracting vbf files" << std::endl;
 
             std::string tmp = IO::CreateTmpPath("cmd_vbf_tmp_orig");
             if (tmp.empty())
             {
-                gbl_err << "Failed to create tmp vbf extraction path" << std::endl;
+                LOG(ERR) << "Failed to create tmp vbf extraction path" << std::endl;
                 return false;
             }
-            if (!vbf.extract_all(tmp, *node))
+            if (!vbf.extract_all(*node, tmp))
             {
-                gbl_err << "Failed to extract files from vbf - " << vbf_file_name << std::endl;
+                LOG(ERR) << "Failed to extract files from vbf - " << vbf_file_name << std::endl;
                 return false;
             }
 
-            auto orig_path_segs = IO::Segment(orig_path);
-            auto intr_path_segs = IO::Segment(intr_path);
-            std::string tmp_parent_file = !intr_path_segs.empty() && !orig_path_segs.empty() && intr_path_segs.back() == orig_path_segs.back() ? tmp + "/" + orig_path_segs.back() : tmp;
-            std::string tmp_file = !orig_path_segs.empty() && vbf.find_file(vbf_file_name) ? tmp_parent_file + "/" + orig_path_segs.back() : tmp_parent_file;
+            std::string tmp_file = tmp + (IO::IsDirectory(orig_path) ? "" : "/" + IO::FileName(orig_path));
 
             std::vector<const char*> args;
             args.reserve(7);
@@ -615,30 +583,27 @@ bool ConverterInterface::Run(int argc, const char** argv)
             std::string vbf_path, vbf_file_name;
             if (!VBFUtils::Separate(mod_path, vbf_path, vbf_file_name))
             {
-                gbl_err << "Failed to deduce archive paths for " << mod_path << std::endl;
+                LOG(ERR) << "Failed to deduce archive paths for " << mod_path << std::endl;
                 return false;
             }
 
             std::string tmp = IO::CreateTmpPath("cmd_vbf_tmp_out");
             if (tmp.empty())
             {
-                gbl_err << "Failed to create tmp vbf injection path" << std::endl;
+                LOG(ERR) << "Failed to create tmp vbf injection path" << std::endl;
                 return false;
             }
 
-            gbl_log << "Loading vbf " << vbf_path << std::endl;
+            LOG(INFO) << "Loading vbf " << vbf_path << std::endl;
 
             VBFArchive vbf;
             if (!vbf.load(vbf_path))
             {
-                gbl_err << "Failed to load " << vbf_path << std::endl;
+                LOG(ERR) << "Failed to load " << vbf_path << std::endl;
                 return false;
             }
-            auto intr_path_segs = IO::Segment(intr_path);
-            auto mod_path_segs = IO::Segment(mod_path);
-            std::string tmp_parent_file = !intr_path_segs.empty() && !mod_path_segs.empty() && intr_path_segs.back() == mod_path_segs.back() ? tmp + "/" + mod_path_segs.back() : tmp;
-            std::string tmp_file = !mod_path_segs.empty() && vbf.find_file(vbf_file_name) ? tmp_parent_file + "/" + mod_path_segs.back() : tmp_parent_file;
-            
+            std::string tmp_file = tmp + (IO::IsDirectory(mod_path) ? "" : "/" + IO::FileName(mod_path));
+
             int _argc = 5;
             const char* _argv[] = { argv[0], "pack", orig_path.c_str(), intr_path.c_str(), tmp_file.c_str() };
 
@@ -651,21 +616,20 @@ bool ConverterInterface::Run(int argc, const char** argv)
             VBFArchive::TreeNode* node = vbf.find_node(vbf_file_name);
             if (node == nullptr)
             {
-                gbl_err << "Failed to find file/folder in vbf - " << vbf_file_name << std::endl;
+                LOG(ERR) << "Failed to find file/folder in vbf - " << vbf_file_name << std::endl;
                 return false;
             }
 
-            gbl_log << "Injecting files into vbf" << std::endl;
+            LOG(INFO) << "Injecting files into vbf" << std::endl;
 
-            if (!vbf.inject_all(tmp, *node))
+            if (!vbf.inject_all(*node, tmp))
             {
-                gbl_err << "Failed to inject files into vbf - " << vbf_file_name << std::endl;
-                return false;
+                LOG(ERR) << "Failed to inject files into vbf - " << vbf_file_name << std::endl;
             }
 
             if(!vbf.update_header())
             {
-                gbl_err << "Failed to update vbf header of " << vbf_file_name << std::endl;
+                LOG(ERR) << "Failed to update vbf header of " << vbf_file_name << std::endl;
                 return false;
             }
             fs::remove_all(tmp);
@@ -687,18 +651,83 @@ bool ConverterInterface::Run(int argc, const char** argv)
     }
     catch (const Args::BaseException& e)
     {
-        gbl_err << e.desc() << std::endl;
+        LOG(ERR) << e.desc() << std::endl;
         return false;
     }
     catch (const std::exception& e)
     {
-        gbl_err << "Unhandled Exception: " << e.what() << std::endl;
+        LOG(ERR) << "Unhandled Exception: " << e.what() << std::endl;
         return false;
     }
     catch (const ::CriticalFailure& cf)
     {
-        gbl_err << cf.message << std::endl;
+        LOG(ERR) << cf.message << std::endl;
         return false;
     }
     return false;
+}
+
+GlobalLogger::GlobalLogger(uint32_t ID) : ID(ID) {}
+
+void GlobalLogger::write(const std::string& string)
+{
+    if (!file || !to_file)
+    {
+        sstream << string;
+        return;
+    }
+
+    if (file != stdout && file != stderr)
+    {
+        uint32_t size = string.size();
+        if (fwrite(&ID, 1, sizeof(ID), file) != sizeof(ID) ||
+            fwrite(&size, 1, sizeof(size), file) != sizeof(size)
+        ) {
+            std::cerr << "Failed to write to log file" << std::endl;
+        }
+    }
+    if (fwrite(string.data(), 1, string.size(), file) != string.size())
+    {
+        std::cerr << "Failed to write to log file" << std::endl;
+    }
+    fflush(file);
+}
+
+void GlobalLogger::direct_to_file()
+{
+    if (!to_file)
+    {
+        if (file)
+        {
+            fflush(file);
+        }
+        sstream.str("");
+        sstream.clear();
+        to_file = true;
+    }
+}
+void GlobalLogger::direct_to_sstream()
+{
+    if (to_file)
+    {
+        if (file)
+        {
+            fflush(file);
+        }
+        sstream.str("");
+        sstream.clear();
+        to_file = false;
+    }
+}
+
+TemporaryLogger::TemporaryLogger(GlobalLogger& logger)
+    : logger(logger)
+{}
+
+TemporaryLogger::~TemporaryLogger()
+{
+    if (sstream.tellp() != 0)
+    {
+        logger.write(sstream.str());
+    }
 }

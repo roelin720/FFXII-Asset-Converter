@@ -11,6 +11,8 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE "CONVERTER_VERSION=\"${CONVER
 
 set_target_properties(${PROJECT_NAME} PROPERTIES LINKER_LANGUAGE CXX)
 
+add_compile_options(-g -fsanitize=address)
+
 target_include_directories(${PROJECT_NAME} PUBLIC "${ADDITIONAL_INCLUDE_DIRECTORIES}")
 target_link_libraries(${PROJECT_NAME} PUBLIC assimp DirectXTex)
 

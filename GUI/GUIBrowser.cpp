@@ -31,6 +31,8 @@
 #include "ClipDragDrop.h"
 #include "ClipDropTarget.h"
 #include <ShlObj.h>
+#include <locale>
+#include <codecvt> 
 
 namespace
 {
@@ -565,7 +567,7 @@ bool FileBrowser::init(HWND window)
 {
 	free();
 
-	this->window = window;
+	this->hwnd = window;
 
 	if (OleInitialize(NULL) != S_OK)
 	{
@@ -647,7 +649,7 @@ void FileBrowser::free()
 	right_icon_tiny.free();
 	pin_icon.free();
 
-	RevokeDragDrop(window);
+	RevokeDragDrop(hwnd);
 	OleUninitialize();
 
 	if (drop_target)
@@ -656,7 +658,7 @@ void FileBrowser::free()
 		delete drop_target;
 	}
 
-	window = nullptr;
+	hwnd = nullptr;
 }
 
 bool FileBrowser::set_current_path(const std::string& path)
@@ -929,8 +931,8 @@ void FileBrowser::drag_current_file()
 	POINT cursor_pos;
 	GetCursorPos(&cursor_pos);
 	if (dragging_left)
-		PostMessage(window, WM_LBUTTONUP, MK_LBUTTON, MAKELPARAM(cursor_pos.x, cursor_pos.y));
-	else PostMessage(window, WM_RBUTTONUP, MK_RBUTTON, MAKELPARAM(cursor_pos.x, cursor_pos.y));
+		PostMessage(hwnd, WM_LBUTTONUP, MK_LBUTTON, MAKELPARAM(cursor_pos.x, cursor_pos.y));
+	else PostMessage(hwnd, WM_RBUTTONUP, MK_RBUTTON, MAKELPARAM(cursor_pos.x, cursor_pos.y));
 
 	dragging_current_file = false;
 }
@@ -941,7 +943,7 @@ void FileBrowser::create_new_folder()
 
 	if (!std::filesystem::exists(cur_folder_str) || !std::filesystem::is_directory(cur_folder_str))
 	{
-		gbl_err << "Directory does not exist to create new folder in" << std::endl;
+		LOG(ERR) << "Directory does not exist to create new folder in" << std::endl;
 		return;
 	}
 
@@ -959,7 +961,7 @@ void FileBrowser::create_new_folder()
 	int result = SHCreateDirectoryExA(NULL, new_folder_path.c_str(), NULL);
 	if (result != 0)
 	{
-		gbl_err << "Failed to create new folder in current directory, error_code " << result << std::endl;
+		LOG(ERR) << "Failed to create new folder in current directory, error_code " << result << std::endl;
 		return;
 	}
 
@@ -971,14 +973,14 @@ void FileBrowser::rename_current_file(const std::string& new_name)
 {
 	if (cur_filename.empty())
 	{
-		gbl_err << "Failed to rename file: current file name is empty" << std::endl;
+		LOG(ERR) << "Failed to rename file: current file name is empty" << std::endl;
 		return;
 	}
 	std::string old_path = IO::Join(cur_parent_folder) + "/" + cur_filename;
 
 	if (!std::filesystem::exists(old_path))
 	{
-		gbl_err << "Path does not exist to rename" << std::endl;
+		LOG(ERR) << "Path does not exist to rename" << std::endl;
 		return;
 	}
 	std::string new_path = IO::Join(cur_parent_folder) + "/" + new_name;
@@ -996,7 +998,7 @@ void FileBrowser::rename_current_file(const std::string& new_name)
 	int result = SHFileOperation(&fileOp);
 	if (result != 0)
 	{
-		gbl_err << "Failed to rename current file/folder, error_code " << result << std::endl;
+		LOG(ERR) << "Failed to rename current file/folder, error_code " << result << std::endl;
 		return;
 	}
 	cur_filename = new_path;
@@ -1007,14 +1009,14 @@ void FileBrowser::trash_current_file()
 {
 	if (cur_filename.empty())
 	{
-		gbl_err << "Failed to trash file: current file name is empty" << std::endl;
+		LOG(ERR) << "Failed to trash file: current file name is empty" << std::endl;
 		return;
 	}
 	std::string path = IO::Join(cur_parent_folder) + "/" + cur_filename;
 
 	if (!std::filesystem::exists(path))
 	{
-		gbl_err << "Path does not exist to trash" << std::endl;
+		LOG(ERR) << "Path does not exist to trash" << std::endl;
 		return;
 	}
 	path = std::filesystem::weakly_canonical(path).string();
@@ -1028,11 +1030,121 @@ void FileBrowser::trash_current_file()
 	int result = SHFileOperation(&fileOp);
 	if (result != 0)
 	{
-		gbl_err << "Failed to trash current file/folder, error_code " << result << std::endl;
+		LOG(ERR) << "Failed to trash current file/folder, error_code " << result << std::endl;
 		return;
 	}
 	cur_filename = "";
 	focus_current_folder = true;
+}
+
+bool FileBrowser::get_external_dialog_path(bool file, bool folder, bool is_new, std::wstring& path)
+{
+	std::string cur_path_str = IO::Join(cur_parent_folder) + (file && !cur_filename.empty() ? "/" + cur_filename : "");
+	std::string arc_path, arc_asset_path;
+	if (!VBFUtils::Separate(cur_path_str, arc_path, arc_asset_path))
+	{
+		LOG(ERR) << "current path into vbf is invalid" << std::endl;
+		return false;
+	}
+
+	VBFArchive* vbf = nullptr;
+	VBFArchive::TreeNode* node = nullptr;
+
+	if (auto find = archives.find(arc_path);
+		find != archives.end() &&
+		find->second.loaded &&
+		find->second.valid
+	) {
+		vbf = &find->second.archive;
+	}
+	else
+	{
+		LOG(ERR) << "Current path into vbf is invalid" << std::endl;
+		return false;
+	}
+
+	node = vbf->find_node(arc_asset_path);
+	if (node == nullptr)
+	{
+		LOG(ERR) << "Current path into vbf is invalid" << std::endl;
+		return false;
+	}
+
+	path.clear();
+
+	IFileDialog* file_dialog = nullptr;
+	if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&file_dialog))))
+	{
+		DWORD opts;
+		if (SUCCEEDED(file_dialog->GetOptions(&opts)))
+		{
+			if (!node->children.empty() && folder)
+			{
+				file_dialog->SetTitle(L"Select a Folder");
+				file_dialog->SetOptions(opts | FOS_PICKFOLDERS);
+			}
+			else if (node->file && file)
+			{
+				file_dialog->SetTitle(L"Select a File");
+				file_dialog->SetOptions((opts & ~FOS_ALLOWMULTISELECT) | (!is_new ? FOS_FILEMUSTEXIST : 0));
+			}
+			else
+			{
+				file_dialog->Release();
+				return false;
+			}
+
+			if (SUCCEEDED(file_dialog->Show(hwnd)))
+			{
+				IShellItem* shell_item;
+				if (SUCCEEDED(file_dialog->GetResult(&shell_item)))
+				{
+					PWSTR folder_path;
+					if (SUCCEEDED(shell_item->GetDisplayName(SIGDN_FILESYSPATH, &folder_path)))
+					{
+						path = folder_path;
+						CoTaskMemFree(folder_path);
+					}
+					shell_item->Release();
+				}
+			}
+		}
+
+		file_dialog->Release();
+	}
+
+	return !path.empty();
+}
+
+void FileBrowser::run_extract_dialog()
+{
+	std::wstring path;
+	if (!get_external_dialog_path(false, true, true, path))
+	{
+		return;
+	}
+	std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+	std::string narrow_path = converter.to_bytes(path);
+
+	if (path != std::wstring(narrow_path.begin(), narrow_path.end()))
+	{
+		gui.alert("Failed to extract - path contains unsupported wide characters");
+		return;
+	}
+
+	VBFExtractClipHelper vbf_helper(*this, narrow_path);
+	vbf_helper.perform_extractions();
+}
+
+void FileBrowser::run_inject_dialog()
+{
+	std::wstring path;
+	if (!get_external_dialog_path(true, true, false, path))
+	{
+		return;
+	}
+	VBFInjectClipHelper vbf_helper(*this);
+	vbf_helper.perform_injections({ path });
 }
 
 void FileBrowser::draw_archive_modal_window()
@@ -1082,14 +1194,25 @@ void FileBrowser::draw_current_folder_pane()
 
 	std::string cur_folder_str = IO::Join(cur_parent_folder);
 
-	static ImGuiTableFlags flags =
+	constexpr ImGuiTableFlags table_flags =
 		ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable |
 		ImGuiTableFlags_ContextMenuInBody | ImGuiTableFlags_NoBordersInBodyUntilResize |
 		ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Sortable;
 
 	bool in_vbf = cur_folder_str.find(".vbf") != std::string::npos;
 
-	if (ImGui::BeginTable("file_table", in_vbf ? 3 : 5, flags, ImVec2(0.0f, 0.0f), 0.0f))
+	static std::string name_query;
+	if (!ImGui::GetIO().WantTextInput && gui.last_char && isascii(gui.last_char) && isprint(gui.last_char))
+	{
+		name_query.push_back(tolower((char)gui.last_char));
+	}
+	if (ImGui::IsAnyMouseDown() || ImGui::GetIO().WantTextInput || ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f)
+	{
+		name_query.clear();
+	}
+	bool focus_queried_name = !name_query.empty();
+
+	if (ImGui::BeginTable("file_table", in_vbf ? 3 : 5, table_flags, ImVec2(0.0f, 0.0f), 0.0f))
 	{
 		ImGui::TableSetupColumn("Name", 0, 200.0f, FileInfo::FieldID::Name);
 		ImGui::TableSetupColumn("Type", 0, 100.0f, FileInfo::FieldID::Type);
@@ -1181,6 +1304,13 @@ void FileBrowser::draw_current_folder_pane()
 					cur_filename = children[i].name;
 				}
 
+				if (focus_queried_name && !children[i].name.empty() && IO::ToLower(children[i].name).starts_with(name_query))
+				{
+					ImGui::SetFocusID(ImGui::GetID(children[i].name.c_str()), ImGui::GetCurrentWindow());
+					ImGui::SetScrollHereY();
+					focus_queried_name = false;
+				}
+
 				if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) ||
 					ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGui::GetKeyIndex(ImGuiKey_Enter))
 				) {
@@ -1205,7 +1335,7 @@ void FileBrowser::draw_current_folder_pane()
 					dragging_left = ImGui::IsMouseDragging(ImGuiMouseButton_Left);
 				}
 
-				if ((!in_vbf || children[i].typeID & FileInfo::Folder) && ImGui::BeginPopupContextItem(("cmenu_" + IO::Join(cur_parent_folder) + children[i].name).c_str()))
+				if (ImGui::BeginPopupContextItem(("cmenu_" + IO::Join(cur_parent_folder) + children[i].name).c_str()))
 				{
 					if (children[i].typeID & (FileInfo::Folder | FileInfo::VBFArchive))
 					{
@@ -1221,7 +1351,6 @@ void FileBrowser::draw_current_folder_pane()
 					}
 					else if(!in_vbf)
 					{
-						ImGui::Separator();
 						if (ImGui::Selectable("Open Location in Explorer")) open_natively(IO::Join(cur_parent_folder));
 					}
 					if (!in_vbf)
@@ -1236,6 +1365,20 @@ void FileBrowser::draw_current_folder_pane()
 						{
 							cur_filename = children[i].name;
 							trash_current_file();
+						}
+					}
+					else
+					{
+						ImGui::Separator();
+						if (ImGui::Selectable("Extract To..."))
+						{
+							cur_filename = children[i].name;
+							run_extract_dialog();
+						}
+						if (ImGui::Selectable("Inject From..."))
+						{
+							cur_filename = children[i].name;
+							run_inject_dialog();
 						}
 					}
 
@@ -1308,7 +1451,7 @@ ImRect FileBrowser::draw_tree(const std::vector<std::string>& path)
 		ImGui::SetNextItemOpen(true, ImGuiCond_Always);
 	}
 
-	ImRect nodeRect = draw_folder_tree_node(path, clicked, is_cur_path, children.empty(), 
+	ImRect node_rect = draw_folder_tree_node(path, clicked, is_cur_path, children.empty(), 
 	[this, &path_str, &path]() 
 	{	
 		if (ImGui::BeginPopupContextItem(path_str.c_str()))
@@ -1341,7 +1484,7 @@ ImRect FileBrowser::draw_tree(const std::vector<std::string>& path)
 		set_current_folder(path);
 	}
 
-	return nodeRect;
+	return node_rect;
 }
 
 ImRect FileBrowser::draw_folder_tree_node(const std::vector<std::string>& path, bool& clicked, bool selected, bool leaf, const std::function<void()> pre_children, generator child_generator, const std::function<ImRect(void*)>& child_operator, int type_code)
@@ -1439,12 +1582,16 @@ ImRect FileBrowser::draw_vbf_tree(const std::vector<std::string>& vbf_path, cons
 		{
 			if (ImGui::Selectable("Open")) push_pinned_folder(vbf_path);
 			if (ImGui::Selectable("Pin")) push_pinned_folder(vbf_path);
+			ImGui::Separator();
+			if (ImGui::Selectable("Extract To...")) run_extract_dialog();
+			if (ImGui::Selectable("Inject From...")) run_inject_dialog();
+			ImGui::Separator();
 			if (ImGui::Selectable("Open Location in Explorer")) open_natively(vbf_path_str);
 
 			ImGui::EndPopup();
 		}
 	},
-	!arc_rec.archive.name_tree.empty() ? generator::create(arc_rec.archive.name_tree[0].children) : generator(),
+	!arc_rec.archive.tree.empty() ? generator::create(arc_rec.archive.tree[0].children) : generator(),
 	[this, &vbf_path, &cur_arc_name](void* child_ptr)
 	{
 		VBFArchive::TreeNode& child = **(VBFArchive::TreeNode**)child_ptr;
@@ -1492,7 +1639,9 @@ ImRect FileBrowser::draw_vbf_tree(const std::vector<std::string>& vbf_path, cons
 
 			if (ImGui::Selectable("Open")) push_pinned_folder(folder);
 			if (ImGui::Selectable("Pin")) push_pinned_folder(folder);
-
+			ImGui::Separator();
+			if (ImGui::Selectable("Extract To...")) run_extract_dialog();
+			if (ImGui::Selectable("Inject From...")) run_inject_dialog();
 			ImGui::EndPopup();
 		}
 	},
@@ -1584,7 +1733,7 @@ void FileBrowser::draw_nav_bar()
 			set_current_folder_to_next();
 		}
 		//ImGui::Separator();
-		if (ImGui::ImageButton(up_icon, button_size))
+		if (ImGui::ImageButton(up_icon, button_size) || (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Backspace)))
 		{
 			if (!cur_parent_folder.empty())
 			{
@@ -1866,7 +2015,7 @@ void FileBrowser::save_pinned_folders()
 	}
 	catch (const std::exception&)
 	{
-		gbl_err << "Failed to save pinned folders";
+		LOG(ERR) << "Failed to save pinned folders";
 	}
 }
 
@@ -1890,6 +2039,7 @@ void FileBrowser::set_current_folder(const std::vector<std::string>& folder)
 	folder_history_end = folder_history.insert(folder_history_end, folder) + 1;
 	folder_history_end = folder_history.erase(folder_history_end, folder_history.end());
 	cur_parent_folder = *(folder_history_end - 1);
+	cur_filename = "";
 	focus_current_folder = true;
 }
 
@@ -1902,6 +2052,7 @@ void FileBrowser::set_current_folder_to_prev()
 			folder_history_end--;
 		}
 		cur_parent_folder = *(folder_history_end - 1);
+		cur_filename = "";
 		focus_current_folder = true;
 	}
 }
@@ -1915,6 +2066,7 @@ void FileBrowser::set_current_folder_to_next()
 			folder_history_end++;
 		}
 		cur_parent_folder = *(folder_history_end - 1);
+		cur_filename = "";
 		focus_current_folder = true;
 	}
 }
